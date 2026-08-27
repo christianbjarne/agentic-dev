@@ -72,18 +72,30 @@ jobs:
           reviewed_sha="$(git rev-parse HEAD)"
           git diff --check "origin/${TARGET_BRANCH}...HEAD" -- \
             '.github/**' \
-            ':(glob)**/*.Notebook/notebook-content.py'
+            'guideline/**' \
+            ':(glob)**/*.Notebook/notebook-content.py' \
+            ':(glob)**/*.Report/**'
           git show \
             "origin/${TARGET_BRANCH}:.github/scripts/validate_fabric_notebooks.py" \
             > /tmp/validate_fabric_notebooks.py
           git show \
             "origin/${TARGET_BRANCH}:.github/scripts/fix_fabric_notebook_violations.py" \
             > /tmp/fix_fabric_notebook_violations.py
+          git show \
+            "origin/${TARGET_BRANCH}:.github/scripts/validate_powerbi_reports.py" \
+            > /tmp/validate_powerbi_reports.py
           set +e
           python /tmp/validate_fabric_notebooks.py --root "$GITHUB_WORKSPACE" \
             > /tmp/agent-review.log 2>&1
-          validator_exit="$?"
+          notebook_exit="$?"
+          python /tmp/validate_powerbi_reports.py --root "$GITHUB_WORKSPACE" \
+            >> /tmp/agent-review.log 2>&1
+          report_exit="$?"
           set -e
+          validator_exit=0
+          if [ "$notebook_exit" -ne 0 ] || [ "$report_exit" -ne 0 ]; then
+            validator_exit=1
+          fi
 
           {
             echo "## Fabric Agent Review"
@@ -93,13 +105,14 @@ jobs:
             echo "Sources applied:"
             echo "- \`guideline/fabric_project\`"
             echo "- \`guideline/fabric_project_data_eng\`"
+            echo "- \`guideline/powerbi_report/README.md\` and Opportunity Revenue template"
             echo "- \`.github/skills/*/SKILL.md\` selected by changed workload"
             echo
           } > /tmp/review.md
 
           if [ "$validator_exit" -ne 0 ]; then
             finding_count="$(
-              grep -cE ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
+              grep -cE ': error \[(FAB|PBI)[0-9]{3}\]' /tmp/agent-review.log || true
             )"
             set +e
             python /tmp/fix_fabric_notebook_violations.py \
@@ -115,7 +128,7 @@ jobs:
                 echo "Found ${finding_count} Fabric guideline violations:"
                 echo
                 echo '```text'
-                grep -E ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
+                grep -E ': error \[(FAB|PBI)[0-9]{3}\]' /tmp/agent-review.log || true
                 echo '```'
                 echo
                 echo "The agent could not produce a safe automatic patch:"
@@ -141,6 +154,12 @@ jobs:
               echo "The proposed patch does not resolve all findings."
               exit 1
             fi
+            if ! python /tmp/validate_powerbi_reports.py \
+              --root "$GITHUB_WORKSPACE" >> /tmp/proposal-validation.log 2>&1; then
+              cat /tmp/proposal-validation.log
+              echo "The proposed patch does not resolve all findings."
+              exit 1
+            fi
 
             git diff --binary > "$GITHUB_WORKSPACE/agent-proposal.patch"
             git reset --hard HEAD
@@ -150,7 +169,7 @@ jobs:
               echo "Found ${finding_count} Fabric guideline violations:"
               echo
               echo '```text'
-              grep -E ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
+              grep -E ': error \[(FAB|PBI)[0-9]{3}\]' /tmp/agent-review.log || true
               echo '```'
               echo
               echo "### Agent-proposed correction"
@@ -277,9 +296,12 @@ jobs:
           fi
 
           python .github/scripts/validate_fabric_notebooks.py
+          python .github/scripts/validate_powerbi_reports.py
           git diff --check "origin/${TARGET_BRANCH}...HEAD" -- \
             '.github/**' \
-            ':(glob)**/*.Notebook/notebook-content.py'
+            'guideline/**' \
+            ':(glob)**/*.Notebook/notebook-content.py' \
+            ':(glob)**/*.Report/**'
 
           applied_sha="$(git rev-parse HEAD)"
           if [ "$applied_sha" != "$before_merge" ]; then

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Filter1ce2d7ed595ee9095ce0",
+    "expression": {
+      "Column": {
+        "Expression": {
+          "SourceRef": {
+            "Entity": "Accounts"
+          }
+        },
+        "Property": "Region"
+      }
+    },
+    "type": "Categorical",
+    "howCreated": 5
+  },
+  {
+    "name": "Filter4644741952a7721ce66d",
+    "expression": {
+      "Column": {
+        "Expression": {
+          "SourceRef": {
+            "Entity": "Accounts"
+          }
+        },
+        "Property": "State"
+      }
+    },
+    "type": "Categorical",
+    "howCreated": 5
+  }
+]

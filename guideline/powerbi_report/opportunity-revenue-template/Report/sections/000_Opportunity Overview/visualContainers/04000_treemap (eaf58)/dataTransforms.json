@@ -1,0 +1,198 @@
+{
+  "objects": {
+    "categoryLabels": [
+      {
+        "properties": {
+          "fontSize": {
+            "expr": {
+              "Literal": {
+                "Value": "8D"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "projectionOrdering": {
+    "Group": [
+      0,
+      2
+    ],
+    "Values": [
+      1
+    ]
+  },
+  "projectionActiveItems": {
+    "Group": [
+      {
+        "queryRef": "Account.Region",
+        "suppressConcat": false
+      }
+    ]
+  },
+  "queryMetadata": {
+    "Select": [
+      {
+        "Restatement": "Region",
+        "Name": "Account.Region",
+        "Type": 2048
+      },
+      {
+        "Restatement": "Total Opportunity Count",
+        "Name": "Fact.Opportunity Count",
+        "Type": 3,
+        "Format": "#,0"
+      },
+      {
+        "Restatement": "State",
+        "Name": "Account.State",
+        "Type": 2048,
+        "DataCategory": 16
+      }
+    ],
+    "Filters": [
+      {
+        "type": 0,
+        "expression": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Accounts"
+              }
+            },
+            "Property": "Region"
+          }
+        }
+      },
+      {
+        "type": 0,
+        "expression": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "SalesStages"
+              }
+            },
+            "Property": "Sales Stage"
+          }
+        }
+      },
+      {
+        "type": 0,
+        "expression": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Accounts"
+              }
+            },
+            "Property": "State"
+          }
+        }
+      },
+      {
+        "type": 2,
+        "expression": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Sales"
+              }
+            },
+            "Property": "Total Opportunity Count"
+          }
+        }
+      }
+    ]
+  },
+  "visualElements": [
+    {
+      "DataRoles": [
+        {
+          "Name": "Group",
+          "Projection": 0,
+          "isActive": true
+        },
+        {
+          "Name": "Group",
+          "Projection": 2,
+          "isActive": false
+        },
+        {
+          "Name": "Values",
+          "Projection": 1,
+          "isActive": false
+        }
+      ]
+    }
+  ],
+  "selects": [
+    {
+      "displayName": "Region",
+      "queryName": "Account.Region",
+      "roles": {
+        "Group": true
+      },
+      "type": {
+        "category": null,
+        "underlyingType": 1
+      },
+      "expr": {
+        "Column": {
+          "Expression": {
+            "SourceRef": {
+              "Entity": "Accounts"
+            }
+          },
+          "Property": "Region"
+        }
+      }
+    },
+    {
+      "displayName": "Total Opportunity Count",
+      "format": "#,0",
+      "queryName": "Fact.Opportunity Count",
+      "roles": {
+        "Values": true
+      },
+      "sort": 2,
+      "sortOrder": 0,
+      "type": {
+        "category": null,
+        "underlyingType": 260
+      },
+      "expr": {
+        "Measure": {
+          "Expression": {
+            "SourceRef": {
+              "Entity": "Sales"
+            }
+          },
+          "Property": "Total Opportunity Count"
+        }
+      }
+    },
+    {
+      "displayName": "State",
+      "queryName": "Account.State",
+      "roles": {
+        "Group": true
+      },
+      "type": {
+        "category": "StateOrProvince",
+        "underlyingType": 7013377
+      },
+      "expr": {
+        "Column": {
+          "Expression": {
+            "SourceRef": {
+              "Entity": "Accounts"
+            }
+          },
+          "Property": "State"
+        }
+      }
+    }
+  ]
+}

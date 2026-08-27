@@ -1,0 +1,35 @@
+{
+  "name": "e1128ed43c7e67602223",
+  "layouts": [
+    {
+      "id": 0,
+      "position": {
+        "height": 91.428571428571431,
+        "width": 457.14285714285717,
+        "x": 49.6048632218845,
+        "y": 92.401215805471125,
+        "z": 15000,
+        "tabOrder": 6000
+      }
+    }
+  ],
+  "singleVisualGroup": {
+    "displayName": "Opportunity Cards",
+    "groupMode": 0,
+    "objects": {
+      "background": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

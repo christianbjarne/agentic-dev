@@ -1,0 +1,86 @@
+{
+  "version": "5.66",
+  "themeCollection": {
+    "baseTheme": {
+      "name": "CY20SU09",
+      "type": 2,
+      "version": {
+        "visual": "1.8.52",
+        "report": "2.0.52",
+        "page": "1.3.52"
+      }
+    },
+    "customTheme": {
+      "name": "Classroom10888586425032654.json",
+      "type": 1,
+      "version": {
+        "visual": "1.8.52",
+        "report": "2.0.52",
+        "page": "1.3.52"
+      }
+    }
+  },
+  "activeSectionIndex": 0,
+  "defaultDrillFilterOtherVisuals": true,
+  "filterSortOrder": 3,
+  "slowDataSourceSettings": {
+    "isCrossHighlightingDisabled": false,
+    "isSlicerSelectionsButtonEnabled": false,
+    "isFilterSelectionsButtonEnabled": false,
+    "isFieldWellButtonEnabled": false,
+    "isApplyAllButtonEnabled": false
+  },
+  "linguisticSchemaSyncVersion": 2,
+  "settings": {
+    "isPersistentUserStateDisabled": false,
+    "hideVisualContainerHeader": false,
+    "useStylableVisualContainerHeader": true,
+    "exportDataMode": 1,
+    "useNewFilterPaneExperience": true,
+    "optOutNewFilterPaneExperience": false,
+    "defaultFilterActionIsDataFilter": false,
+    "useCrossReportDrillthrough": false,
+    "allowChangeFilterTypes": true,
+    "allowInlineExploration": true,
+    "disableFilterPaneSearch": false,
+    "enableDeveloperMode": false,
+    "allowDataPointLassoSelect": true,
+    "pauseQueries": false,
+    "useEnhancedTooltips": true
+  },
+  "objects": {
+    "section": [
+      {
+        "properties": {
+          "verticalAlignment": {
+            "expr": {
+              "Literal": {
+                "Value": "'Top'"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "outspacePane": [
+      {
+        "properties": {
+          "visible": {
+            "expr": {
+              "Literal": {
+                "Value": "true"
+              }
+            }
+          },
+          "expanded": {
+            "expr": {
+              "Literal": {
+                "Value": "true"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "id": 11642639,
+  "layoutOptimization": 1,
+  "pods": [
+    {
+      "boundSection": "ReportSection9380eec50a2a0165bb4b",
+      "config": "{}",
+      "id": 70824617,
+      "name": "Pod",
+      "parameters": "[{\"name\":\"Param_Filter1ce2d7ed595ee9095ce0\",\"boundFilter\":\"Filter1ce2d7ed595ee9095ce0\",\"fieldExpr\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Entity\":\"Accounts\"}},\"Property\":\"Region\"}}},{\"name\":\"Param_Filter4644741952a7721ce66d\",\"boundFilter\":\"Filter4644741952a7721ce66d\",\"fieldExpr\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Entity\":\"Accounts\"}},\"Property\":\"State\"}}}]",
+      "type": 1
+    }
+  ],
+  "publicCustomVisuals": [],
+  "reportId": 4314903,
+  "resourcePackages": [
+    {
+      "resourcePackage": {
+        "disabled": false,
+        "id": 21244376,
+        "items": [
+          {
+            "id": 88168276,
+            "name": "Classroom10888586425032654.json",
+            "path": "Classroom10888586425032654.json",
+            "resourcePackageId": 21244376,
+            "type": 100
+          },
+          {
+            "name": "overview2663478309722106.svg",
+            "path": "overview2663478309722106.svg",
+            "type": 100
+          },
+          {
+            "name": "overview8016108441107853.svg",
+            "path": "overview8016108441107853.svg",
+            "type": 100
+          }
+        ],
+        "name": "RegisteredResources",
+        "type": 1
+      }
+    },
+    {
+      "resourcePackage": {
+        "disabled": false,
+        "id": 21244377,
+        "items": [
+          {
+            "id": 88168277,
+            "name": "CY20SU09",
+            "path": "BaseThemes/CY20SU09.json",
+            "resourcePackageId": 21244377,
+            "type": 202
+          }
+        ],
+        "name": "SharedResources",
+        "type": 2
+      }
+    }
+  ],
+  "theme": "Classroom10888586425032654.json"
+}

@@ -1,0 +1,238 @@
+{
+  "Commands": [
+    {
+      "SemanticQueryDataShapeCommand": {
+        "Query": {
+          "Version": 2,
+          "From": [
+            {
+              "Name": "o",
+              "Entity": "Opportunities",
+              "Type": 0
+            },
+            {
+              "Name": "a",
+              "Entity": "Accounts",
+              "Type": 0
+            },
+            {
+              "Name": "p",
+              "Entity": "Partners",
+              "Type": 0
+            },
+            {
+              "Name": "f",
+              "Entity": "Sales",
+              "Type": 0
+            }
+          ],
+          "Select": [
+            {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Source": "o"
+                  }
+                },
+                "Property": "Opportunity Size"
+              },
+              "Name": "Opportunity.Opportunity Size"
+            },
+            {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Source": "a"
+                  }
+                },
+                "Property": "Region"
+              },
+              "Name": "Account.Region"
+            },
+            {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Source": "p"
+                  }
+                },
+                "Property": "Partner"
+              },
+              "Name": "Partner.Partner"
+            },
+            {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Source": "f"
+                  }
+                },
+                "Property": "Total Opportunity Count"
+              },
+              "Name": "Fact.Opportunity Count"
+            },
+            {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Source": "f"
+                  }
+                },
+                "Property": "Total Revenue"
+              },
+              "Name": "Fact.Revenue",
+              "NativeReferenceName": "Total Revenue"
+            },
+            {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Source": "f"
+                  }
+                },
+                "Property": "Average Revenue"
+              },
+              "Name": "Fact.Avg Revenue",
+              "NativeReferenceName": "Average Revenue"
+            },
+            {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Source": "f"
+                  }
+                },
+                "Property": "Average Opportunity Days"
+              },
+              "Name": "Sales.Total Opportunity Days",
+              "NativeReferenceName": "Average Opportunity Days"
+            }
+          ],
+          "OrderBy": [
+            {
+              "Direction": 2,
+              "Expression": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Source": "f"
+                    }
+                  },
+                  "Property": "Total Revenue"
+                }
+              }
+            }
+          ]
+        },
+        "Binding": {
+          "Primary": {
+            "Groupings": [
+              {
+                "Projections": [
+                  0
+                ],
+                "Subtotal": 2
+              },
+              {
+                "Projections": [
+                  1
+                ],
+                "Subtotal": 2
+              },
+              {
+                "Projections": [
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ],
+                "Subtotal": 2
+              }
+            ],
+            "Expansion": {
+              "From": [
+                {
+                  "Name": "o",
+                  "Entity": "Opportunities",
+                  "Type": 0
+                },
+                {
+                  "Name": "a",
+                  "Entity": "Accounts",
+                  "Type": 0
+                }
+              ],
+              "Levels": [
+                {
+                  "Expressions": [
+                    {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Source": "o"
+                          }
+                        },
+                        "Property": "Opportunity Size"
+                      }
+                    }
+                  ],
+                  "Default": 1
+                },
+                {
+                  "Expressions": [
+                    {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Source": "a"
+                          }
+                        },
+                        "Property": "Region"
+                      }
+                    }
+                  ],
+                  "Default": 1
+                }
+              ],
+              "Instances": {
+                "Children": [
+                  {
+                    "Values": [
+                      {
+                        "Literal": {
+                          "Value": "'Large'"
+                        }
+                      }
+                    ],
+                    "Children": [
+                      {
+                        "Values": [
+                          {
+                            "Literal": {
+                              "Value": "'East'"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "DataReduction": {
+            "DataVolume": 3,
+            "Primary": {
+              "Window": {
+                "Count": 500
+              }
+            }
+          },
+          "Version": 1
+        },
+        "ExecutionMetricsKind": 1
+      }
+    }
+  ]
+}

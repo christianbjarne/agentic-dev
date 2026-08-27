@@ -27,6 +27,9 @@ For every pull request:
    changed components. For Fabric data engineering or end-to-end Fabric
    projects, always evaluate the applicable requirements in
    `guideline/fabric_project` and `guideline/fabric_project_data_eng`.
+   For Power BI `.Report` or `.pbip` changes, always evaluate
+   `guideline/powerbi_report/README.md` and compare the report structure with
+   its Opportunity Revenue reference template.
 3. Enumerate `.github/skills/*/SKILL.md`. Match each skill's name,
    description, triggers, and scope to the PR. Read every matching `SKILL.md`;
    apply multiple skills when the change spans multiple Fabric workloads.
@@ -38,7 +41,8 @@ For every pull request:
    then evaluate every changed component against it. Check, as applicable:
    Fabric architecture, supported APIs, authentication, item definitions,
    naming, data movement, Medallion layers, Delta patterns, data quality,
-   semantic models, DAX, orchestration, deployment, error handling,
+   semantic models, DAX, Power BI page architecture, visual selection,
+   accessibility, PBIR validity, orchestration, deployment, error handling,
    idempotency, validation, and tests.
 6. For every finding, provide:
    - the changed file and line;
