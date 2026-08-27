@@ -1,0 +1,206 @@
+{
+  "id": "5963fcc8-d91f-56d6-a8e5-ad3294e26b82",
+  "eTag": "173e0150-94bf-590a-ab01-3bd66146fac1",
+  "title": "NYC Taxi Live Dashboard",
+  "tiles": [
+    {
+      "id": "9385187f-d708-5a86-9d3e-0a48da7388e3",
+      "title": "Trips ingested",
+      "subtitle": "Streaming sample event count",
+      "visualType": "card",
+      "pageId": "Live",
+      "dataSourceId": "e72412dc-7424-597a-8fb4-700cc34aa25b",
+      "query": "TaxiEvents | summarize Trips=count()",
+      "visualOptions": {
+        "showTitle": true,
+        "title": "Trips ingested",
+        "tileTextSize": 14,
+        "titleTextSize": 16,
+        "subtitleTextSize": 11,
+        "showSubtitle": true,
+        "backgroundColor": "#FFFFFF",
+        "visualTheme": "Light",
+        "visualBaseTheme": "Light",
+        "titleAlignment": "left",
+        "lineWidth": 3,
+        "lineStyle": "solid",
+        "legendLocation": "bottom"
+      },
+      "usedParamVariables": [],
+      "queryDefinitions": {
+        "query": {
+          "kind": 0,
+          "connectionId": "e72412dc-7424-597a-8fb4-700cc34aa25b"
+        }
+      },
+      "state": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "width": 3,
+          "height": 3,
+          "tabOrder": 0
+        },
+        "showOnPages": {
+          "kind": 1
+        }
+      }
+    },
+    {
+      "id": "a2429275-caca-5676-a439-9fb667ebcb9c",
+      "title": "Revenue pulse",
+      "subtitle": "Total amount by pickup minute",
+      "visualType": "line",
+      "pageId": "Live",
+      "dataSourceId": "e72412dc-7424-597a-8fb4-700cc34aa25b",
+      "query": "TaxiEvents | where ingestion_time() > ago(30m) | summarize Revenue=sum(total_amount) by EventMinute=bin(ingestion_time(), 1m) | order by EventMinute asc",
+      "visualOptions": {
+        "showTitle": true,
+        "title": "Revenue pulse",
+        "tileTextSize": 14,
+        "titleTextSize": 16,
+        "subtitleTextSize": 11,
+        "showSubtitle": true,
+        "backgroundColor": "#FFFFFF",
+        "visualTheme": "Light",
+        "visualBaseTheme": "Light",
+        "titleAlignment": "left",
+        "lineWidth": 3,
+        "lineStyle": "solid",
+        "legendLocation": "bottom"
+      },
+      "usedParamVariables": [],
+      "queryDefinitions": {
+        "query": {
+          "kind": 0,
+          "connectionId": "e72412dc-7424-597a-8fb4-700cc34aa25b"
+        }
+      },
+      "state": {
+        "position": {
+          "x": 3,
+          "y": 0,
+          "z": 0,
+          "width": 9,
+          "height": 5,
+          "tabOrder": 3
+        },
+        "showOnPages": {
+          "kind": 1
+        }
+      }
+    },
+    {
+      "id": "a78246ec-3cf6-573f-baf0-feeab1381937",
+      "title": "Top pickup zones",
+      "subtitle": "Trips in the last 30 minutes",
+      "visualType": "barchart",
+      "pageId": "Live",
+      "dataSourceId": "e72412dc-7424-597a-8fb4-700cc34aa25b",
+      "query": "TaxiEvents | where ingestion_time() > ago(30m) | summarize Trips=count() by PULocationID | top 10 by Trips desc",
+      "visualOptions": {
+        "showTitle": true,
+        "title": "Top pickup zones",
+        "tileTextSize": 14,
+        "titleTextSize": 16,
+        "subtitleTextSize": 11,
+        "showSubtitle": true,
+        "backgroundColor": "#FFFFFF",
+        "visualTheme": "Light",
+        "visualBaseTheme": "Light",
+        "titleAlignment": "left",
+        "lineWidth": 3,
+        "lineStyle": "solid",
+        "legendLocation": "bottom"
+      },
+      "usedParamVariables": [],
+      "queryDefinitions": {
+        "query": {
+          "kind": 0,
+          "connectionId": "e72412dc-7424-597a-8fb4-700cc34aa25b"
+        }
+      },
+      "state": {
+        "position": {
+          "x": 0,
+          "y": 5,
+          "z": 0,
+          "width": 6,
+          "height": 5,
+          "tabOrder": 50
+        },
+        "showOnPages": {
+          "kind": 1
+        }
+      }
+    },
+    {
+      "id": "e11fed1b-e228-5eb8-8272-77f9174c8fd9",
+      "title": "High-fare events",
+      "subtitle": "Taxi events over $100",
+      "visualType": "table",
+      "pageId": "Live",
+      "dataSourceId": "e72412dc-7424-597a-8fb4-700cc34aa25b",
+      "query": "TaxiEvents | where ingestion_time() > ago(30m) | where total_amount > 100 | top 20 by ingestion_time() desc | project tpep_pickup_datetime, PULocationID, DOLocationID, trip_distance, total_amount",
+      "visualOptions": {
+        "showTitle": true,
+        "title": "High-fare events",
+        "tileTextSize": 14,
+        "titleTextSize": 16,
+        "subtitleTextSize": 11,
+        "showSubtitle": true,
+        "backgroundColor": "#FFFFFF",
+        "visualTheme": "Light",
+        "visualBaseTheme": "Light",
+        "titleAlignment": "left",
+        "lineWidth": 3,
+        "lineStyle": "solid",
+        "legendLocation": "bottom"
+      },
+      "usedParamVariables": [],
+      "queryDefinitions": {
+        "query": {
+          "kind": 0,
+          "connectionId": "e72412dc-7424-597a-8fb4-700cc34aa25b"
+        }
+      },
+      "state": {
+        "position": {
+          "x": 6,
+          "y": 5,
+          "z": 0,
+          "width": 6,
+          "height": 5,
+          "tabOrder": 56
+        },
+        "showOnPages": {
+          "kind": 1
+        }
+      }
+    }
+  ],
+  "dataSources": [
+    {
+      "id": "e72412dc-7424-597a-8fb4-700cc34aa25b",
+      "name": "NYC Taxi Realtime",
+      "clusterUri": "https://trd-s7bwhgntmap9dbanrf.z9.kusto.fabric.microsoft.com",
+      "type": "kusto-trident",
+      "database": "b90680f4-3b85-4098-9bb0-766ab3dfdce4",
+      "workspace": "f39ba351-8523-4084-9da1-ed33e4eff8ed"
+    }
+  ],
+  "pages": [
+    {
+      "id": "Live",
+      "name": "NYC Taxi Live",
+      "description": "Live taxi stream, revenue, and anomaly monitoring"
+    }
+  ],
+  "schemaVersion": 18,
+  "autoRefresh": {
+    "enabled": true,
+    "defaultInterval": "00:00:30",
+    "minInterval": "00:00:10"
+  }
+}

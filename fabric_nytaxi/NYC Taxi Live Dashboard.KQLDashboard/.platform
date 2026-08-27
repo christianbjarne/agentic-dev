@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "KQLDashboard",
+    "displayName": "NYC Taxi Live Dashboard",
+    "description": "Live taxi operations and fare anomaly dashboard"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "0d7f59d4-aca9-b6c8-43e8-830ef4616164"
+  }
+}

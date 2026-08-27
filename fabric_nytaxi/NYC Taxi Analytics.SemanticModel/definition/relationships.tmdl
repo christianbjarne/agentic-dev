@@ -1,104 +1,20 @@
-relationship 'Yellow Trips to Date'
-	fromColumn: 'Yellow Trips'.'Pickup Date Key'
-	toColumn: Date.'Date Key'
+relationship rel_date
+	fromColumn: fact_trips.pickup_date_key
+	toColumn: dim_date.date_key
 
-relationship 'Yellow Trips to Pickup Zone'
-	fromColumn: 'Yellow Trips'.'Pickup Location ID'
-	toColumn: 'Pickup Zone'.'Location ID'
+relationship rel_zone
+	fromColumn: fact_trips.pickup_location_id
+	toColumn: dim_zone.location_id
 
-relationship 'Yellow Trips to Dropoff Zone'
-	fromColumn: 'Yellow Trips'.'Dropoff Location ID'
-	toColumn: 'Dropoff Zone'.'Location ID'
+relationship rel_vendor
+	fromColumn: fact_trips.vendor_id
+	toColumn: dim_vendor.vendor_id
 
-relationship 'Yellow Trips to Service Type'
-	fromColumn: 'Yellow Trips'.'Service Type Key'
-	toColumn: 'Service Type'.'Service Type Key'
+relationship rel_payment
+	fromColumn: fact_trips.payment_type
+	toColumn: dim_payment.payment_type
 
-relationship 'Yellow Trips to Vendor'
-	fromColumn: 'Yellow Trips'.'Vendor ID'
-	toColumn: Vendor.'Vendor ID'
-
-relationship 'Yellow Trips to Rate Code'
-	fromColumn: 'Yellow Trips'.'Rate Code ID'
-	toColumn: 'Rate Code'.'Rate Code ID'
-
-relationship 'Yellow Trips to Payment Type'
-	fromColumn: 'Yellow Trips'.'Payment Type ID'
-	toColumn: 'Payment Type'.'Payment Type ID'
-
-relationship 'Green Trips to Date'
-	fromColumn: 'Green Trips'.'Pickup Date Key'
-	toColumn: Date.'Date Key'
-
-relationship 'Green Trips to Pickup Zone'
-	fromColumn: 'Green Trips'.'Pickup Location ID'
-	toColumn: 'Pickup Zone'.'Location ID'
-
-relationship 'Green Trips to Dropoff Zone'
-	fromColumn: 'Green Trips'.'Dropoff Location ID'
-	toColumn: 'Dropoff Zone'.'Location ID'
-
-relationship 'Green Trips to Service Type'
-	fromColumn: 'Green Trips'.'Service Type Key'
-	toColumn: 'Service Type'.'Service Type Key'
-
-relationship 'Green Trips to Vendor'
-	fromColumn: 'Green Trips'.'Vendor ID'
-	toColumn: Vendor.'Vendor ID'
-
-relationship 'Green Trips to Rate Code'
-	fromColumn: 'Green Trips'.'Rate Code ID'
-	toColumn: 'Rate Code'.'Rate Code ID'
-
-relationship 'Green Trips to Payment Type'
-	fromColumn: 'Green Trips'.'Payment Type ID'
-	toColumn: 'Payment Type'.'Payment Type ID'
-
-relationship 'Green Trips to Trip Type'
-	fromColumn: 'Green Trips'.'Trip Type ID'
-	toColumn: 'Trip Type'.'Trip Type ID'
-
-relationship 'FHV Trips to Date'
-	fromColumn: 'For-Hire Vehicle Trips'.'Pickup Date Key'
-	toColumn: Date.'Date Key'
-
-relationship 'FHV Trips to Pickup Zone'
-	fromColumn: 'For-Hire Vehicle Trips'.'Pickup Location ID'
-	toColumn: 'Pickup Zone'.'Location ID'
-
-relationship 'FHV Trips to Dropoff Zone'
-	fromColumn: 'For-Hire Vehicle Trips'.'Dropoff Location ID'
-	toColumn: 'Dropoff Zone'.'Location ID'
-
-relationship 'FHV Trips to Service Type'
-	fromColumn: 'For-Hire Vehicle Trips'.'Service Type Key'
-	toColumn: 'Service Type'.'Service Type Key'
-
-relationship 'High Volume Trips to Date'
-	fromColumn: 'High Volume For-Hire Vehicle Trips'.'Pickup Date Key'
-	toColumn: Date.'Date Key'
-
-relationship 'High Volume Trips to Pickup Zone'
-	fromColumn: 'High Volume For-Hire Vehicle Trips'.'Pickup Location ID'
-	toColumn: 'Pickup Zone'.'Location ID'
-
-relationship 'High Volume Trips to Dropoff Zone'
-	fromColumn: 'High Volume For-Hire Vehicle Trips'.'Dropoff Location ID'
-	toColumn: 'Dropoff Zone'.'Location ID'
-
-relationship 'High Volume Trips to Service Type'
-	fromColumn: 'High Volume For-Hire Vehicle Trips'.'Service Type Key'
-	toColumn: 'Service Type'.'Service Type Key'
-
-relationship 'High Volume Trips to Provider'
-	fromColumn: 'High Volume For-Hire Vehicle Trips'.'Provider License Number'
-	toColumn: 'High Volume Provider'.'Provider License Number'
-
-relationship 'Monthly Summary to Date'
-	fromColumn: 'Monthly Trip Summary'.'Month Date Key'
-	toColumn: Date.'Date Key'
-
-relationship 'Monthly Summary to Service Type'
-	fromColumn: 'Monthly Trip Summary'.'Service Type Key'
-	toColumn: 'Service Type'.'Service Type Key'
+relationship rel_ratecode
+	fromColumn: fact_trips.ratecode_id
+	toColumn: dim_ratecode.ratecode_id
 

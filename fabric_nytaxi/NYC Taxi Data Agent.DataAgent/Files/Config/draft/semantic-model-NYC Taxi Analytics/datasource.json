@@ -1,0 +1,183 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/dataSource/1.0.0/schema.json",
+  "artifactId": "f4a92908-9092-9647-491c-8e7dad48b79d",
+  "workspaceId": "00000000-0000-0000-0000-000000000000",
+  "dataSourceInstructions": "Use explicit measures for trip, fare, passenger, tip, and revenue questions. Treat revenue as total_amount. Use dim_date for calendar analysis and dim_zone for borough and zone analysis. ML segment questions use ml_zone_clusters.",
+  "displayName": "NYC Taxi Analytics",
+  "type": "semantic_model",
+  "userDescription": "Direct Lake NYC TLC Yellow Taxi star schema with validated trips, revenue measures, geography, and KMeans zone segments.",
+  "metadata": null,
+  "elements": [
+    {
+      "id": "d3d3da83-de85-4de6-bf5d-5ffa6708cba4",
+      "is_selected": true,
+      "display_name": "fact_trips",
+      "type": "semantic_model.table",
+      "description": "Validated taxi-trip fact table.",
+      "children": [
+        {
+          "id": "c95fdb8b-777d-4770-b02c-1e862e6905d3",
+          "is_selected": true,
+          "display_name": "Total Trips",
+          "type": "semantic_model.measure",
+          "data_type": "int64",
+          "description": "Count of validated trips.",
+          "children": []
+        },
+        {
+          "id": "96040436-57f0-4212-b615-4c559d516867",
+          "is_selected": true,
+          "display_name": "Total Revenue",
+          "type": "semantic_model.measure",
+          "data_type": "double",
+          "description": "Sum of total charged amount.",
+          "children": []
+        },
+        {
+          "id": "250eec0d-bd35-43b0-8037-6e4e0cbf78d4",
+          "is_selected": true,
+          "display_name": "Avg Fare",
+          "type": "semantic_model.measure",
+          "data_type": "double",
+          "description": "Average metered fare.",
+          "children": []
+        },
+        {
+          "id": "d592bf8d-f886-40ae-934b-21a8ae1d6933",
+          "is_selected": true,
+          "display_name": "Total Tips",
+          "type": "semantic_model.measure",
+          "data_type": "double",
+          "description": "Sum of tip amount.",
+          "children": []
+        },
+        {
+          "id": "618e6dde-0d0d-4b06-9c8e-bc318d9cadf4",
+          "is_selected": true,
+          "display_name": "service_type",
+          "type": "semantic_model.column",
+          "data_type": "string",
+          "description": null,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "b83a8a4c-8c34-43ef-95b7-a3e821c157c5",
+      "is_selected": true,
+      "display_name": "dim_date",
+      "type": "semantic_model.table",
+      "description": "Calendar dimension.",
+      "children": [
+        {
+          "id": "94c7695b-cc46-41bf-b0ad-01f186e5ec7c",
+          "is_selected": true,
+          "display_name": "full_date",
+          "type": "semantic_model.column",
+          "data_type": "dateTime",
+          "description": null,
+          "children": []
+        },
+        {
+          "id": "36459ab2-2d1a-4000-9443-31cc0cbcc64a",
+          "is_selected": true,
+          "display_name": "month_name",
+          "type": "semantic_model.column",
+          "data_type": "string",
+          "description": null,
+          "children": []
+        },
+        {
+          "id": "7f0d43dd-72ea-4402-8987-8cb6b48defe0",
+          "is_selected": true,
+          "display_name": "week",
+          "type": "semantic_model.column",
+          "data_type": "int64",
+          "description": null,
+          "children": []
+        },
+        {
+          "id": "7598d8f2-bb2d-4178-8d6d-c22de7c638bc",
+          "is_selected": true,
+          "display_name": "day_name",
+          "type": "semantic_model.column",
+          "data_type": "string",
+          "description": null,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "2ea9a719-89a2-4422-898c-0f8580dd5507",
+      "is_selected": true,
+      "display_name": "dim_zone",
+      "type": "semantic_model.table",
+      "description": "NYC TLC taxi-zone dimension.",
+      "children": [
+        {
+          "id": "79b45972-f072-490f-829a-999bbc1cd4e5",
+          "is_selected": true,
+          "display_name": "borough",
+          "type": "semantic_model.column",
+          "data_type": "string",
+          "description": null,
+          "children": []
+        },
+        {
+          "id": "7bf5c04f-4aa1-44ea-a90a-28656740367e",
+          "is_selected": true,
+          "display_name": "zone",
+          "type": "semantic_model.column",
+          "data_type": "string",
+          "description": null,
+          "children": []
+        },
+        {
+          "id": "80499efb-bf48-4f8e-9c62-7639ccf1ab61",
+          "is_selected": true,
+          "display_name": "service_zone",
+          "type": "semantic_model.column",
+          "data_type": "string",
+          "description": null,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "f3d5f40c-f078-46f9-97e9-2d1279672a56",
+      "is_selected": true,
+      "display_name": "ml_zone_clusters",
+      "type": "semantic_model.table",
+      "description": "KMeans taxi-zone segmentation.",
+      "children": [
+        {
+          "id": "962d0ba8-fefa-483a-87c3-3700bd4a146e",
+          "is_selected": true,
+          "display_name": "cluster_label",
+          "type": "semantic_model.column",
+          "data_type": "string",
+          "description": null,
+          "children": []
+        },
+        {
+          "id": "7ef86439-e14a-436b-a868-42d90858b0ad",
+          "is_selected": true,
+          "display_name": "ML Segment Revenue",
+          "type": "semantic_model.measure",
+          "data_type": "double",
+          "description": null,
+          "children": []
+        },
+        {
+          "id": "b292151c-0a7b-40b0-a559-01cbe4b66edd",
+          "is_selected": true,
+          "display_name": "ML Segment Trips",
+          "type": "semantic_model.measure",
+          "data_type": "int64",
+          "description": null,
+          "children": []
+        }
+      ]
+    }
+  ]
+}

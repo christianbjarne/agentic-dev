@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Eventstream",
+    "displayName": "NYCTaxiLiveStream",
+    "description": "YellowTaxi SampleData routed to Eventhouse and Activator"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "1703632a-b96b-81cb-4eb3-901efc22559d"
+  }
+}

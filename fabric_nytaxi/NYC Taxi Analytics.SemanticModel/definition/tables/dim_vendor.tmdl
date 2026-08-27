@@ -1,0 +1,21 @@
+/// Taxi technology provider dimension.
+table dim_vendor
+
+	/// Vendor key.
+	column vendor_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: vendor_id
+
+	/// Vendor name.
+	column vendor_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: vendor_name
+
+	partition dim_vendor = entity
+		mode: directLake
+		source
+			entityName: tbl_nyc_taxi_dim_vendor
+			expressionSource: DirectLake
+

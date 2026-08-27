@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "KQLDatabase",
+    "displayName": "NYC Taxi Realtime",
+    "description": "NYC Taxi streaming database (dev)"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "b3dfdce4-766a-9bb0-4098-3b85b90680f4"
+  }
+}

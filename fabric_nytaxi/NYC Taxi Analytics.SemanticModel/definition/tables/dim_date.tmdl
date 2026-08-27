@@ -1,0 +1,45 @@
+/// Calendar dimension for pickup-date analysis.
+table dim_date
+
+	/// Calendar date key.
+	column date_key
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: date_key
+
+	/// Calendar date.
+	column full_date
+		dataType: dateTime
+		summarizeBy: none
+		sourceColumn: full_date
+
+	/// Calendar year.
+	column year
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: year
+
+	/// Full month name.
+	column month_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: month_name
+
+	/// ISO-like week number.
+	column week
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: week_of_year
+
+	/// Day-of-week name.
+	column day_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: day_name
+
+	partition dim_date = entity
+		mode: directLake
+		source
+			entityName: tbl_nyc_taxi_dim_date
+			expressionSource: DirectLake
+

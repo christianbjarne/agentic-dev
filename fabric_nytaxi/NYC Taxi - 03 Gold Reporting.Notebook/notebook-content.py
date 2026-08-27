@@ -8,190 +8,309 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "52bc2e1b-964f-4930-bc63-c8af5e491bf2",
-# META       "default_lakehouse_name": "nyc_taxi_lakehouse",
+# META       "default_lakehouse": "1d366068-ed28-4e4d-a36a-495cf9889d6c",
+# META       "default_lakehouse_name": "LH_Gold",
 # META       "default_lakehouse_workspace_id": "f39ba351-8523-4084-9da1-ed33e4eff8ed"
 # META     }
 # META   }
 # META }
 
+# PARAMETERS CELL ********************
+
+process_year = 2025
+process_month = 1
+environment = "dev"
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
 # CELL ********************
 
-from functools import reduce
+from datetime import datetime, timezone
 
+from pyspark.ml.clustering import KMeans
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.ml.feature import StandardScaler, VectorAssembler
+from pyspark.ml.regression import LinearRegression
 from pyspark.sql import functions as F
 
+# Pipeline parameters. Fabric overrides these values when supplied by a caller.
 
 spark.conf.set("spark.sql.parquet.vorder.default", "true")
+spark.conf.set("spark.microsoft.delta.optimizeWrite.enabled", "true")
 spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
 spark.conf.set("spark.databricks.delta.optimizeWrite.binSize", "1g")
 spark.conf.set("spark.sql.adaptive.enabled", "true")
-spark.sql("CREATE SCHEMA IF NOT EXISTS gold")
 
-fact_tables = [
-    "silver.fact_yellow_trip",
-    "silver.fact_green_trip",
-    "silver.fact_fhv_trip",
-    "silver.fact_high_volume_fhv_trip",
-]
+silver_trips = spark.table("src_tbl_nyc_taxi_trip")
+silver_zones = spark.table("src_tbl_nyc_taxi_zone")
 
-monthly_frames = []
-for table_name in fact_tables:
-    frame = spark.table(table_name)
-    monthly = frame.groupBy("pickup_month_start", "service_type_key").agg(
-        F.count(F.lit(1)).cast("long").alias("trip_count"),
-        F.sum("passenger_count").cast("long").alias("passenger_count"),
-        F.sum("trip_distance").cast("decimal(20,2)").alias("trip_distance"),
-        F.sum("trip_duration_minutes").cast("decimal(20,2)").alias("trip_duration_minutes"),
-        F.sum("fare_amount").cast("decimal(20,2)").alias("fare_amount"),
-        F.sum("tip_amount").cast("decimal(20,2)").alias("tip_amount"),
-        F.sum("tolls_amount").cast("decimal(20,2)").alias("tolls_amount"),
-        F.sum("total_amount").cast("decimal(20,2)").alias("total_amount"),
-        F.sum("congestion_surcharge_amount")
-        .cast("decimal(20,2)")
-        .alias("congestion_surcharge_amount"),
-        F.sum("airport_fee_amount").cast("decimal(20,2)").alias("airport_fee_amount"),
-        F.sum("cbd_congestion_fee_amount")
-        .cast("decimal(20,2)")
-        .alias("cbd_congestion_fee_amount"),
-        F.sum(F.when(F.col("shared_request_flag") == "Y", 1).otherwise(0))
-        .cast("long")
-        .alias("shared_request_count"),
-        F.sum(F.when(F.col("shared_match_flag") == "Y", 1).otherwise(0))
-        .cast("long")
-        .alias("shared_match_count"),
-        F.sum(F.when(F.col("wav_request_flag") == "Y", 1).otherwise(0))
-        .cast("long")
-        .alias("wav_request_count"),
-        F.sum(F.when(F.col("wav_match_flag") == "Y", 1).otherwise(0))
-        .cast("long")
-        .alias("wav_match_count"),
-    )
-    monthly_frames.append(monthly)
+fact_trip = silver_trips.select(
+    "trip_id",
+    "pickup_date_key",
+    "pickup_datetime",
+    "dropoff_datetime",
+    "pickup_hour",
+    "pickup_day_of_week",
+    "pickup_location_id",
+    "dropoff_location_id",
+    "vendor_id",
+    "ratecode_id",
+    "payment_type",
+    "passenger_count",
+    "trip_distance",
+    "trip_duration_minutes",
+    "fare_amount",
+    "tip_amount",
+    "tolls_amount",
+    "total_amount",
+    "source_year",
+    "source_month",
+).withColumn("service_type", F.lit("Yellow Taxi"))
 
-monthly_summary = reduce(lambda left, right: left.unionByName(right), monthly_frames)
-monthly_summary = (
-    monthly_summary.withColumn(
-        "month_date_key", F.date_format("pickup_month_start", "yyyyMMdd").cast("int")
+dim_date = (
+    spark.sql(
+        f"""
+        SELECT explode(
+            sequence(
+                to_date('{int(process_year)}-01-01'),
+                to_date('{int(process_year)}-12-31'),
+                interval 1 day
+            )
+        ) AS full_date
+        """
     )
-    .withColumn(
-        "paid_trip_count",
-        F.when(F.col("service_type_key").isin(1, 2, 4), F.col("trip_count")).otherwise(F.lit(0)),
-    )
-    .withColumn(
-        "average_trip_distance",
-        F.when(F.col("trip_count") > 0, F.col("trip_distance") / F.col("trip_count"))
-        .otherwise(F.lit(0))
-        .cast("decimal(18,2)"),
-    )
-    .withColumn(
-        "average_trip_duration_minutes",
-        F.when(
-            F.col("trip_count") > 0,
-            F.col("trip_duration_minutes") / F.col("trip_count"),
-        )
-        .otherwise(F.lit(0))
-        .cast("decimal(18,2)"),
-    )
-    .withColumn(
-        "average_fare_amount",
-        F.when(F.col("paid_trip_count") > 0, F.col("fare_amount") / F.col("paid_trip_count"))
-        .otherwise(F.lit(0))
-        .cast("decimal(18,2)"),
-    )
-    .withColumn(
-        "average_tip_amount",
-        F.when(F.col("paid_trip_count") > 0, F.col("tip_amount") / F.col("paid_trip_count"))
-        .otherwise(F.lit(0))
-        .cast("decimal(18,2)"),
-    )
-    .withColumn(
-        "tip_rate",
-        F.when(F.col("fare_amount") != 0, F.col("tip_amount") / F.col("fare_amount"))
-        .otherwise(F.lit(0))
-        .cast("decimal(18,4)"),
-    )
-    .withColumn(
-        "shared_match_rate",
-        F.when(
-            F.col("shared_request_count") > 0,
-            F.col("shared_match_count") / F.col("shared_request_count"),
-        )
-        .otherwise(F.lit(0))
-        .cast("decimal(18,4)"),
-    )
-    .withColumn(
-        "wav_fulfillment_rate",
-        F.when(
-            F.col("wav_request_count") > 0,
-            F.col("wav_match_count") / F.col("wav_request_count"),
-        )
-        .otherwise(F.lit(0))
-        .cast("decimal(18,4)"),
-    )
-    .select(
-        "month_date_key",
-        F.col("pickup_month_start").alias("month_start"),
-        "service_type_key",
-        "trip_count",
-        "paid_trip_count",
-        "passenger_count",
+    .withColumn("date_key", F.date_format("full_date", "yyyyMMdd").cast("int"))
+    .withColumn("year", F.year("full_date"))
+    .withColumn("quarter", F.quarter("full_date"))
+    .withColumn("month_number", F.month("full_date"))
+    .withColumn("month_name", F.date_format("full_date", "MMMM"))
+    .withColumn("week_of_year", F.weekofyear("full_date"))
+    .withColumn("day_of_month", F.dayofmonth("full_date"))
+    .withColumn("day_name", F.date_format("full_date", "EEEE"))
+    .withColumn("is_weekend", F.dayofweek("full_date").isin(1, 7))
+)
+dim_zone = silver_zones
+dim_vendor = spark.createDataFrame(
+    [
+        (1, "Creative Mobile Technologies"),
+        (2, "Curb Mobility"),
+        (6, "Myle Technologies"),
+        (7, "Helix"),
+    ],
+    "vendor_id int, vendor_name string",
+)
+dim_payment = spark.createDataFrame(
+    [
+        (1, "Credit card"),
+        (2, "Cash"),
+        (3, "No charge"),
+        (4, "Dispute"),
+        (5, "Unknown"),
+        (6, "Voided trip"),
+    ],
+    "payment_type int, payment_type_name string",
+)
+dim_ratecode = spark.createDataFrame(
+    [
+        (1, "Standard rate"),
+        (2, "JFK"),
+        (3, "Newark"),
+        (4, "Nassau or Westchester"),
+        (5, "Negotiated fare"),
+        (6, "Group ride"),
+        (99, "Unknown"),
+    ],
+    "ratecode_id int, ratecode_name string",
+)
+
+daily_summary = fact_trip.groupBy("pickup_date_key").agg(
+    F.count("*").alias("trip_count"),
+    F.sum("total_amount").alias("total_revenue"),
+    F.sum("fare_amount").alias("fare_revenue"),
+    F.sum("tip_amount").alias("tip_revenue"),
+    F.avg("fare_amount").alias("average_fare"),
+    F.avg("trip_distance").alias("average_distance"),
+    F.avg("trip_duration_minutes").alias("average_duration_minutes"),
+)
+zone_summary = fact_trip.groupBy("pickup_location_id").agg(
+    F.count("*").alias("trip_count"),
+    F.sum("total_amount").alias("total_revenue"),
+    F.avg("fare_amount").alias("average_fare"),
+    F.avg("trip_distance").alias("average_distance"),
+    F.avg("trip_duration_minutes").alias("average_duration_minutes"),
+    F.avg("tip_amount").alias("average_tip"),
+)
+
+tables = {
+    "tbl_nyc_taxi_fact_trip": fact_trip,
+    "tbl_nyc_taxi_dim_date": dim_date,
+    "tbl_nyc_taxi_dim_zone": dim_zone,
+    "tbl_nyc_taxi_dim_vendor": dim_vendor,
+    "tbl_nyc_taxi_dim_payment": dim_payment,
+    "tbl_nyc_taxi_dim_ratecode": dim_ratecode,
+    "tbl_nyc_taxi_daily_summary": daily_summary,
+    "tbl_nyc_taxi_zone_summary": zone_summary,
+}
+for table_name, frame in tables.items():
+    frame.write.format("delta").mode("overwrite").option(
+        "overwriteSchema", "true"
+    ).saveAsTable(table_name)
+
+# Fare regression. A deterministic sample keeps deployment cost bounded while
+# preserving enough rows for a meaningful model.
+ml_base = fact_trip.filter(
+    (F.col("fare_amount") > 0)
+    & (F.col("trip_distance") > 0)
+    & (F.col("trip_duration_minutes") > 0)
+).select(
+    "trip_id",
+    "fare_amount",
+    "trip_distance",
+    "trip_duration_minutes",
+    F.coalesce("passenger_count", F.lit(1)).cast("double").alias("passenger_count"),
+    F.col("pickup_hour").cast("double").alias("pickup_hour"),
+    F.col("pickup_day_of_week").cast("double").alias("pickup_day_of_week"),
+)
+ml_sample = ml_base.sample(False, 0.08, seed=42).limit(250000).cache()
+assembler = VectorAssembler(
+    inputCols=[
         "trip_distance",
         "trip_duration_minutes",
-        "fare_amount",
-        "tip_amount",
-        "tolls_amount",
-        "total_amount",
-        "congestion_surcharge_amount",
-        "airport_fee_amount",
-        "cbd_congestion_fee_amount",
-        "shared_request_count",
-        "shared_match_count",
-        "wav_request_count",
-        "wav_match_count",
-        "average_trip_distance",
-        "average_trip_duration_minutes",
-        "average_fare_amount",
-        "average_tip_amount",
-        "tip_rate",
-        "shared_match_rate",
-        "wav_fulfillment_rate",
+        "passenger_count",
+        "pickup_hour",
+        "pickup_day_of_week",
+    ],
+    outputCol="features",
+    handleInvalid="skip",
+)
+training = assembler.transform(ml_sample).select(
+    "trip_id", F.col("fare_amount").alias("label"), "features"
+)
+train, test = training.randomSplit([0.8, 0.2], seed=42)
+fare_model = LinearRegression(
+    featuresCol="features",
+    labelCol="label",
+    predictionCol="predicted_fare",
+    maxIter=30,
+    regParam=0.05,
+    elasticNetParam=0.0,
+).fit(train)
+predictions = fare_model.transform(test)
+rmse = RegressionEvaluator(
+    labelCol="label", predictionCol="predicted_fare", metricName="rmse"
+).evaluate(predictions)
+r2 = RegressionEvaluator(
+    labelCol="label", predictionCol="predicted_fare", metricName="r2"
+).evaluate(predictions)
+feature_names = assembler.getInputCols()
+coefficients = [
+    (feature_names[index], float(value), float(fare_model.intercept))
+    for index, value in enumerate(fare_model.coefficients)
+]
+spark.createDataFrame(
+    coefficients, "feature_name string, coefficient double, intercept double"
+).withColumn("trained_at_utc", F.current_timestamp()).write.format("delta").mode(
+    "overwrite"
+).saveAsTable("tbl_nyc_taxi_ml_fare_coefficients")
+spark.createDataFrame(
+    [
+        (
+            "linear_regression",
+            int(train.count()),
+            int(test.count()),
+            float(rmse),
+            float(r2),
+            environment,
+            datetime.now(timezone.utc),
+        )
+    ],
+    "model_name string, training_rows long, test_rows long, rmse double, "
+    "r2 double, environment string, trained_at_utc timestamp",
+).write.format("delta").mode("overwrite").saveAsTable(
+    "tbl_nyc_taxi_ml_fare_metrics"
+)
+predictions.select("trip_id", "label", "predicted_fare").limit(25000).write.format(
+    "delta"
+).mode("overwrite").saveAsTable("tbl_nyc_taxi_ml_fare_predictions")
+
+# Zone segmentation with standardized operational and revenue features.
+zone_features = VectorAssembler(
+    inputCols=[
+        "trip_count",
+        "total_revenue",
+        "average_fare",
+        "average_distance",
+        "average_duration_minutes",
+        "average_tip",
+    ],
+    outputCol="raw_features",
+    handleInvalid="skip",
+).transform(zone_summary)
+scaled = StandardScaler(
+    inputCol="raw_features",
+    outputCol="features",
+    withMean=True,
+    withStd=True,
+).fit(zone_features).transform(zone_features)
+zone_model = KMeans(
+    k=5, seed=42, featuresCol="features", predictionCol="zone_cluster"
+).fit(scaled)
+zone_clusters = (
+    zone_model.transform(scaled)
+    .drop("raw_features", "features")
+    .join(
+        dim_zone.select(
+            F.col("location_id").alias("pickup_location_id"),
+            "borough",
+            "zone_name",
+        ),
+        "pickup_location_id",
+        "left",
+    )
+    .withColumn(
+        "avg_tip_pct",
+        F.when(
+            F.col("average_fare") > 0,
+            F.col("average_tip") / F.col("average_fare"),
+        ).otherwise(F.lit(0.0)),
+    )
+    .withColumn(
+        "cluster_label",
+        F.concat(F.lit("Segment "), (F.col("zone_cluster") + F.lit(1)).cast("string")),
     )
 )
+zone_clusters.write.format("delta").mode("overwrite").option(
+    "overwriteSchema", "true"
+).saveAsTable("tbl_nyc_taxi_ml_zone_clusters")
 
-context = notebookutils.runtime.context
-pipeline_run_id = str(context.get("activityId") or context["currentNotebookId"])
-monthly_summary = (
-    monthly_summary
-    .withColumn("ingestion_timestamp", F.current_timestamp())
-    .withColumn("source_system", F.lit("nyc_taxi_03_gold_reporting"))
-    .withColumn("pipeline_run_id", F.lit(pipeline_run_id))
-)
+for table_name in list(tables) + [
+    "tbl_nyc_taxi_ml_fare_coefficients",
+    "tbl_nyc_taxi_ml_fare_metrics",
+    "tbl_nyc_taxi_ml_fare_predictions",
+    "tbl_nyc_taxi_ml_zone_clusters",
+]:
+    spark.sql(f"OPTIMIZE {table_name}")
 
-(
-    monthly_summary.write.format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable("gold.monthly_trip_summary")
-)
-
-spark.sql(
-    "OPTIMIZE gold.monthly_trip_summary ZORDER BY (month_start, service_type_key)"
-)
-
-result = spark.table("gold.monthly_trip_summary")
-row_count = result.count()
-month_count = result.select("month_start").distinct().count()
-service_count = result.select("service_type_key").distinct().count()
-
-if row_count != 48 or month_count != 12 or service_count != 4:
+fact_count = spark.table("tbl_nyc_taxi_fact_trip").count()
+date_count = spark.table("tbl_nyc_taxi_dim_date").count()
+cluster_count = spark.table("tbl_nyc_taxi_ml_zone_clusters").count()
+metric_count = spark.table("tbl_nyc_taxi_ml_fare_metrics").count()
+if fact_count == 0 or date_count not in (365, 366) or cluster_count == 0 or metric_count != 1:
     raise RuntimeError(
-        f"Expected 48 month/service rows, 12 months, and 4 services; "
-        f"found {row_count}, {month_count}, and {service_count}"
+        "Gold validation failed: "
+        f"facts={fact_count}, dates={date_count}, clusters={cluster_count}, "
+        f"metrics={metric_count}"
     )
+print(
+    f"Gold and ML completed: facts={fact_count:,}, zones={cluster_count}, "
+    f"fare_rmse={rmse:.3f}, fare_r2={r2:.3f}"
+)
 
-result.orderBy("month_start", "service_type_key").show(48, truncate=False)
-print("Gold monthly reporting table completed")
 
 # METADATA ********************
 

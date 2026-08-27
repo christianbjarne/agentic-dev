@@ -8,411 +8,259 @@
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
-# META       "default_lakehouse": "52bc2e1b-964f-4930-bc63-c8af5e491bf2",
-# META       "default_lakehouse_name": "nyc_taxi_lakehouse",
+# META       "default_lakehouse": "25d46af5-836b-4596-be94-239421a4365d",
+# META       "default_lakehouse_name": "LH_Silver",
 # META       "default_lakehouse_workspace_id": "f39ba351-8523-4084-9da1-ed33e4eff8ed"
 # META     }
 # META   }
 # META }
 
+# PARAMETERS CELL ********************
+
+process_year = 2025
+process_month = 1
+environment = "dev"
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
 # CELL ********************
 
 from datetime import datetime, timezone
+import uuid
 
-from pyspark.sql import DataFrame
+from delta.tables import DeltaTable
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
+# Pipeline parameters. Fabric overrides these values when supplied by a caller.
 
 spark.conf.set("spark.sql.parquet.vorder.default", "true")
-spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
+spark.conf.set("spark.microsoft.delta.optimizeWrite.enabled", "true")
+spark.conf.set("spark.databricks.delta.autoCompact.enabled", "true")
 spark.conf.set("spark.sql.adaptive.enabled", "true")
-spark.sql("CREATE SCHEMA IF NOT EXISTS silver")
 
-MONEY = "decimal(18,2)"
-NUMBER = "decimal(18,2)"
-
-
-def source_column(frame: DataFrame, *candidates: str):
-    columns = {name.lower(): name for name in frame.columns}
-    for candidate in candidates:
-        actual = columns.get(candidate.lower())
-        if actual:
-            return F.col(f"`{actual}`")
-    return None
-
-
-def value(frame: DataFrame, candidates, data_type, default=None):
-    column = source_column(frame, *candidates)
-    if column is None:
-        return F.lit(default).cast(data_type)
-    return column.cast(data_type)
-
-
-def money(frame: DataFrame, *candidates):
-    return F.coalesce(value(frame, candidates, MONEY), F.lit(0).cast(MONEY))
-
-
-def canonical_fact(
-    raw_table,
-    service_type_key,
-    pickup_candidates,
-    dropoff_candidates,
-    distance_candidates=(),
-    duration_seconds_candidates=(),
-    fare_candidates=(),
-    tip_candidates=(),
-    toll_candidates=(),
-    total_candidates=(),
-):
-    raw = spark.table(raw_table)
-    pickup = value(raw, pickup_candidates, "timestamp")
-    dropoff = value(raw, dropoff_candidates, "timestamp")
-    derived_duration = ((F.unix_timestamp(dropoff) - F.unix_timestamp(pickup)) / F.lit(60.0)).cast(NUMBER)
-    duration_seconds = value(raw, duration_seconds_candidates, "double")
-    duration = (
-        (duration_seconds / F.lit(60.0)).cast(NUMBER)
-        if duration_seconds_candidates and source_column(raw, *duration_seconds_candidates) is not None
-        else derived_duration
-    )
-
-    frame = raw.select(
-        F.lit(service_type_key).cast("int").alias("service_type_key"),
-        pickup.alias("pickup_datetime"),
-        dropoff.alias("dropoff_datetime"),
-        F.coalesce(value(raw, ("PULocationID", "PUlocationID"), "int"), F.lit(0)).alias(
-            "pickup_location_id"
-        ),
-        F.coalesce(value(raw, ("DOLocationID", "DOlocationID"), "int"), F.lit(0)).alias(
-            "dropoff_location_id"
-        ),
-        F.coalesce(value(raw, ("VendorID",), "int"), F.lit(0)).alias("vendor_id"),
-        F.coalesce(value(raw, ("RatecodeID",), "int"), F.lit(99)).alias("rate_code_id"),
-        F.coalesce(value(raw, ("payment_type",), "int"), F.lit(99)).alias("payment_type_id"),
-        F.coalesce(value(raw, ("trip_type",), "int"), F.lit(0)).alias("trip_type_id"),
-        F.coalesce(value(raw, ("hvfhs_license_num",), "string"), F.lit("UNKNOWN")).alias(
-            "hvfhs_license_num"
-        ),
-        F.coalesce(value(raw, ("passenger_count",), "long"), F.lit(0)).alias("passenger_count"),
-        F.coalesce(value(raw, distance_candidates, NUMBER), F.lit(0).cast(NUMBER)).alias(
-            "trip_distance"
-        ),
-        F.coalesce(duration, F.lit(0).cast(NUMBER)).alias("trip_duration_minutes"),
-        F.coalesce(value(raw, fare_candidates, MONEY), F.lit(0).cast(MONEY)).alias("fare_amount"),
-        F.coalesce(value(raw, tip_candidates, MONEY), F.lit(0).cast(MONEY)).alias("tip_amount"),
-        F.coalesce(value(raw, toll_candidates, MONEY), F.lit(0).cast(MONEY)).alias("tolls_amount"),
-        F.coalesce(value(raw, total_candidates, MONEY), F.lit(0).cast(MONEY)).alias("total_amount"),
-        money(raw, "congestion_surcharge").alias("congestion_surcharge_amount"),
-        money(raw, "airport_fee", "Airport_fee").alias("airport_fee_amount"),
-        money(raw, "cbd_congestion_fee").alias("cbd_congestion_fee_amount"),
-        money(raw, "bcf").alias("black_car_fund_amount"),
-        money(raw, "sales_tax").alias("sales_tax_amount"),
-        money(raw, "driver_pay").alias("driver_pay_amount"),
-        F.upper(
-            F.coalesce(value(raw, ("store_and_fwd_flag",), "string"), F.lit("N"))
-        ).alias("store_and_forward_flag"),
-        F.when(
-            F.coalesce(value(raw, ("SR_Flag", "shared_request_flag"), "string"), F.lit("N")).isin(
-                "1", "Y", "y", "true", "True"
-            ),
-            F.lit("Y"),
-        )
-        .otherwise(F.lit("N"))
-        .alias("shared_request_flag"),
-        F.when(
-            F.coalesce(value(raw, ("shared_match_flag",), "string"), F.lit("N")).isin(
-                "1", "Y", "y", "true", "True"
-            ),
-            F.lit("Y"),
-        )
-        .otherwise(F.lit("N"))
-        .alias("shared_match_flag"),
-        F.when(
-            F.coalesce(value(raw, ("wav_request_flag",), "string"), F.lit("N")).isin(
-                "1", "Y", "y", "true", "True"
-            ),
-            F.lit("Y"),
-        )
-        .otherwise(F.lit("N"))
-        .alias("wav_request_flag"),
-        F.when(
-            F.coalesce(value(raw, ("wav_match_flag",), "string"), F.lit("N")).isin(
-                "1", "Y", "y", "true", "True"
-            ),
-            F.lit("Y"),
-        )
-        .otherwise(F.lit("N"))
-        .alias("wav_match_flag"),
-        value(raw, ("dispatching_base_num",), "string").alias("dispatching_base_number"),
-        value(raw, ("Affiliated_base_number",), "string").alias("affiliated_base_number"),
-        F.col("_source_year").cast("int").alias("source_year"),
-        F.col("_source_month").cast("int").alias("source_month"),
-        F.col("_source_file").alias("source_file"),
-        F.col("_batch_id").alias("batch_id"),
-    )
-
-    frame = (
-        frame.withColumn("pickup_date", F.to_date("pickup_datetime"))
-        .withColumn("dropoff_date", F.to_date("dropoff_datetime"))
-        .withColumn("pickup_date_key", F.date_format("pickup_datetime", "yyyyMMdd").cast("int"))
-        .withColumn("dropoff_date_key", F.date_format("dropoff_datetime", "yyyyMMdd").cast("int"))
-        .withColumn("pickup_month_start", F.trunc("pickup_date", "month"))
-        .withColumn("pickup_hour", F.hour("pickup_datetime"))
-    )
-
-    return (
-        frame.filter(
-            (F.col("pickup_datetime") >= F.lit("2025-01-01").cast("timestamp"))
-            & (F.col("pickup_datetime") < F.lit("2026-01-01").cast("timestamp"))
-            & F.col("dropoff_datetime").isNotNull()
-            & (F.col("dropoff_datetime") >= F.col("pickup_datetime"))
-            & (F.col("trip_duration_minutes") >= 0)
-            & (F.col("trip_duration_minutes") <= 1440)
-            & F.col("pickup_location_id").between(0, 265)
-            & F.col("dropoff_location_id").between(0, 265)
-            & F.col("trip_distance").between(0, 1000)
-            & F.col("total_amount").between(-1000, 10000)
-        )
-        .dropDuplicates(
-            [
-                "pickup_datetime",
-                "dropoff_datetime",
-                "pickup_location_id",
-                "dropoff_location_id",
-                "vendor_id",
-                "total_amount",
-                "trip_distance",
-            ]
-        )
-    )
-
-
-yellow = canonical_fact(
-    "bronze.yellow_trips_raw",
-    1,
-    ("tpep_pickup_datetime",),
-    ("tpep_dropoff_datetime",),
-    distance_candidates=("trip_distance",),
-    fare_candidates=("fare_amount",),
-    tip_candidates=("tip_amount",),
-    toll_candidates=("tolls_amount",),
-    total_candidates=("total_amount",),
+month_token = f"{int(process_month):02d}"
+trip_path = (
+    f"Files/bronze_taxi/raw/yellow/"
+    f"yellow_tripdata_{int(process_year)}-{month_token}.parquet"
 )
+zone_path = "Files/bronze_taxi/raw/reference/taxi_zone_lookup.csv"
+run_id = str(uuid.uuid4())
+processed_at = datetime.now(timezone.utc)
 
-green = canonical_fact(
-    "bronze.green_trips_raw",
-    2,
-    ("lpep_pickup_datetime",),
-    ("lpep_dropoff_datetime",),
-    distance_candidates=("trip_distance",),
-    fare_candidates=("fare_amount",),
-    tip_candidates=("tip_amount",),
-    toll_candidates=("tolls_amount",),
-    total_candidates=("total_amount",),
-)
+raw = spark.read.parquet(trip_path)
+zone_raw = spark.read.option("header", True).option("inferSchema", True).csv(zone_path)
 
-fhv = canonical_fact(
-    "bronze.fhv_trips_raw",
-    3,
-    ("pickup_datetime",),
-    ("dropOff_datetime", "dropoff_datetime"),
-)
-
-fhvhv = canonical_fact(
-    "bronze.fhvhv_trips_raw",
-    4,
-    ("pickup_datetime",),
-    ("dropoff_datetime",),
-    distance_candidates=("trip_miles",),
-    duration_seconds_candidates=("trip_time",),
-    fare_candidates=("base_passenger_fare",),
-    tip_candidates=("tips",),
-    toll_candidates=("tolls",),
-)
-fhvhv = fhvhv.withColumn(
-    "total_amount",
-    (
-        F.col("fare_amount")
-        + F.col("tolls_amount")
-        + F.col("tip_amount")
-        + F.col("congestion_surcharge_amount")
-        + F.col("airport_fee_amount")
-        + F.col("cbd_congestion_fee_amount")
-        + F.col("black_car_fund_amount")
-        + F.col("sales_tax_amount")
-    ).cast(MONEY),
-)
-
-facts = {
-    "fact_yellow_trip": ("bronze.yellow_trips_raw", yellow),
-    "fact_green_trip": ("bronze.green_trips_raw", green),
-    "fact_fhv_trip": ("bronze.fhv_trips_raw", fhv),
-    "fact_high_volume_fhv_trip": ("bronze.fhvhv_trips_raw", fhvhv),
-}
-
-quality_rows = []
-processed_at = datetime.now(timezone.utc).isoformat()
-for table_name, (raw_table, clean_frame) in facts.items():
-    raw_count = spark.table(raw_table).count()
-    (
-        clean_frame.write.format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .partitionBy("source_month")
-        .saveAsTable(f"silver.{table_name}")
+typed = (
+    raw.select(
+        F.col("VendorID").cast("int").alias("vendor_id"),
+        F.col("tpep_pickup_datetime").cast("timestamp").alias("pickup_datetime"),
+        F.col("tpep_dropoff_datetime").cast("timestamp").alias("dropoff_datetime"),
+        F.col("passenger_count").cast("int").alias("passenger_count"),
+        F.col("trip_distance").cast("double").alias("trip_distance"),
+        F.col("RatecodeID").cast("int").alias("ratecode_id"),
+        F.col("store_and_fwd_flag").cast("string").alias("store_and_forward_flag"),
+        F.col("PULocationID").cast("int").alias("pickup_location_id"),
+        F.col("DOLocationID").cast("int").alias("dropoff_location_id"),
+        F.col("payment_type").cast("int").alias("payment_type"),
+        F.col("fare_amount").cast("double").alias("fare_amount"),
+        F.col("extra").cast("double").alias("extra_amount"),
+        F.col("mta_tax").cast("double").alias("mta_tax_amount"),
+        F.col("tip_amount").cast("double").alias("tip_amount"),
+        F.col("tolls_amount").cast("double").alias("tolls_amount"),
+        F.col("improvement_surcharge").cast("double").alias("improvement_surcharge"),
+        F.col("total_amount").cast("double").alias("total_amount"),
+        F.lit(int(process_year)).cast("int").alias("source_year"),
+        F.lit(int(process_month)).cast("int").alias("source_month"),
+        F.lit(
+            f"yellow_tripdata_{int(process_year)}-{month_token}.parquet"
+        ).alias("source_file"),
+        F.lit(run_id).alias("dq_run_id"),
+        F.current_timestamp().alias("processed_at_utc"),
     )
-    clean_count = spark.table(f"silver.{table_name}").count()
-    if clean_count == 0:
-        raise RuntimeError(f"silver.{table_name} is empty")
-    quality_rows.append(
-        (
-            table_name,
-            raw_count,
-            clean_count,
-            raw_count - clean_count,
-            float(raw_count - clean_count) / raw_count if raw_count else 0.0,
-            processed_at,
-        )
-    )
-    print(f"silver.{table_name}: {clean_count:,} clean rows from {raw_count:,} raw rows")
-
-date_dimension = (
-    spark.sql(
-        """
-        SELECT explode(
-            sequence(to_date('2025-01-01'), to_date('2025-12-31'), interval 1 day)
-        ) AS date
-        """
-    )
-    .withColumn("date_key", F.date_format("date", "yyyyMMdd").cast("int"))
-    .withColumn("year", F.year("date"))
-    .withColumn("quarter_number", F.quarter("date"))
-    .withColumn("quarter_name", F.concat(F.lit("Q"), F.quarter("date")))
-    .withColumn("month_number", F.month("date"))
-    .withColumn("month_name", F.date_format("date", "MMMM"))
-    .withColumn("month_start", F.trunc("date", "month"))
-    .withColumn("year_month", F.date_format("date", "yyyy-MM"))
-    .withColumn("day_of_month", F.dayofmonth("date"))
     .withColumn(
-        "day_of_week_number",
-        ((F.dayofweek("date") + F.lit(5)) % F.lit(7) + F.lit(1)).cast("int"),
+        "trip_id",
+        F.sha2(
+            F.concat_ws(
+                "||",
+                F.coalesce(F.col("vendor_id").cast("string"), F.lit("")),
+                F.coalesce(F.col("pickup_datetime").cast("string"), F.lit("")),
+                F.coalesce(F.col("dropoff_datetime").cast("string"), F.lit("")),
+                F.coalesce(F.col("pickup_location_id").cast("string"), F.lit("")),
+                F.coalesce(F.col("dropoff_location_id").cast("string"), F.lit("")),
+                F.coalesce(F.col("total_amount").cast("string"), F.lit("")),
+            ),
+            256,
+        ),
     )
-    .withColumn("day_name", F.date_format("date", "EEEE"))
-    .withColumn("week_of_year", F.weekofyear("date"))
-    .withColumn("is_weekend", F.col("day_of_week_number").isin(6, 7))
-)
-
-zone_raw = spark.table("bronze.taxi_zone_lookup_raw")
-zone_columns = {name.lower(): name for name in zone_raw.columns}
-zone_dimension = zone_raw.select(
-    F.col(f"`{zone_columns['locationid']}`").cast("int").alias("location_id"),
-    F.trim(F.col(f"`{zone_columns['borough']}`")).alias("borough"),
-    F.trim(F.col(f"`{zone_columns['zone']}`")).alias("zone_name"),
-    F.trim(F.col(f"`{zone_columns['service_zone']}`")).alias("service_zone"),
-)
-unknown_zone = spark.createDataFrame(
-    [(0, "Unknown", "Unknown", "Unknown")],
-    "location_id int, borough string, zone_name string, service_zone string",
-)
-zone_dimension = unknown_zone.unionByName(zone_dimension).dropDuplicates(["location_id"])
-
-static_dimensions = {
-    "dim_service_type": spark.createDataFrame(
-        [
-            (1, "Yellow Taxi"),
-            (2, "Green Taxi"),
-            (3, "For-Hire Vehicle"),
-            (4, "High-Volume For-Hire Vehicle"),
-        ],
-        "service_type_key int, service_type_name string",
-    ),
-    "dim_vendor": spark.createDataFrame(
-        [
-            (0, "Unknown"),
-            (1, "Creative Mobile Technologies"),
-            (2, "Curb Mobility"),
-            (6, "Myle Technologies"),
-            (7, "Helix"),
-        ],
-        "vendor_id int, vendor_name string",
-    ),
-    "dim_rate_code": spark.createDataFrame(
-        [
-            (1, "Standard Rate"),
-            (2, "JFK"),
-            (3, "Newark"),
-            (4, "Nassau or Westchester"),
-            (5, "Negotiated Fare"),
-            (6, "Group Ride"),
-            (99, "Unknown"),
-        ],
-        "rate_code_id int, rate_code_name string",
-    ),
-    "dim_payment_type": spark.createDataFrame(
-        [
-            (0, "Flex Fare"),
-            (1, "Credit Card"),
-            (2, "Cash"),
-            (3, "No Charge"),
-            (4, "Dispute"),
-            (5, "Unknown"),
-            (6, "Voided Trip"),
-            (99, "Missing"),
-        ],
-        "payment_type_id int, payment_type_name string",
-    ),
-    "dim_trip_type": spark.createDataFrame(
-        [(0, "Unknown"), (1, "Street Hail"), (2, "Dispatch")],
-        "trip_type_id int, trip_type_name string",
-    ),
-    "dim_hvfhs_license": spark.createDataFrame(
-        [
-            ("UNKNOWN", "Unknown"),
-            ("HV0002", "Juno"),
-            ("HV0003", "Uber"),
-            ("HV0004", "Via"),
-            ("HV0005", "Lyft"),
-        ],
-        "hvfhs_license_num string, hvfhs_provider_name string",
-    ),
-}
-
-dimensions = {
-    "dim_date": date_dimension,
-    "dim_taxi_zone": zone_dimension,
-    **static_dimensions,
-}
-for table_name, frame in dimensions.items():
-    (
-        frame.write.format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .saveAsTable(f"silver.{table_name}")
+    .withColumn(
+        "trip_duration_minutes",
+        (
+            F.unix_timestamp("dropoff_datetime")
+            - F.unix_timestamp("pickup_datetime")
+        )
+        / F.lit(60.0),
     )
-    count = spark.table(f"silver.{table_name}").count()
-    if count == 0:
-        raise RuntimeError(f"silver.{table_name} is empty")
-    print(f"silver.{table_name}: {count:,} rows")
-
-quality_schema = """
-fact_table string,
-raw_row_count long,
-clean_row_count long,
-rejected_row_count long,
-rejection_rate double,
-processed_at_utc string
-"""
-(
-    spark.createDataFrame(quality_rows, quality_schema)
-    .write.format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable("silver.data_quality_summary")
+    .withColumn("pickup_date", F.to_date("pickup_datetime"))
+    .withColumn("pickup_date_key", F.date_format("pickup_datetime", "yyyyMMdd").cast("int"))
+    .withColumn("pickup_hour", F.hour("pickup_datetime"))
+    .withColumn("pickup_day_of_week", F.dayofweek("pickup_datetime"))
 )
 
-for dimension_name in dimensions:
-    spark.sql(f"OPTIMIZE silver.{dimension_name}")
+# Metadata-driven rules mirror gex_demo_utils_nb: rules are data, each run is logged,
+# and unexpected rows are persisted separately before accepted rows are written.
+rules = [
+    ("R001", "Completeness", "pickup_datetime", "expect_not_null", "error"),
+    ("R002", "Completeness", "dropoff_datetime", "expect_not_null", "error"),
+    ("R003", "Validity", "pickup_datetime", "expect_year_month", "error"),
+    ("R004", "Validity", "trip_duration_minutes", "expect_between_0_1440", "error"),
+    ("R005", "Validity", "trip_distance", "expect_between_0_200", "error"),
+    ("R006", "Validity", "fare_amount", "expect_between_0_1000", "error"),
+    ("R007", "Validity", "total_amount", "expect_between_0_2000", "error"),
+    ("R008", "Validity", "pickup_location_id", "expect_between_1_265", "error"),
+    ("R009", "Validity", "dropoff_location_id", "expect_between_1_265", "error"),
+    ("R010", "Uniqueness", "trip_id", "expect_unique", "error"),
+]
+rules_df = spark.createDataFrame(
+    rules,
+    "rule_id string, dimension string, column_name string, "
+    "expectation string, severity string",
+).withColumn("dataset_name", F.lit("nyc_taxi_trip")).withColumn("active", F.lit(True))
+rules_df.write.format("delta").mode("overwrite").option(
+    "overwriteSchema", "true"
+).saveAsTable("tbl_nyc_taxi_dq_rules")
 
-print("Silver dimensional model completed")
+expected_start = F.to_timestamp(F.lit(f"{int(process_year)}-{month_token}-01"))
+expected_end = F.add_months(expected_start, 1)
+with_failures = typed.withColumn(
+    "_dq_failure_reasons",
+    F.array_compact(
+        F.array(
+            F.when(F.col("pickup_datetime").isNull(), F.lit("R001")),
+            F.when(F.col("dropoff_datetime").isNull(), F.lit("R002")),
+            F.when(
+                ~(
+                    (F.col("pickup_datetime") >= expected_start)
+                    & (F.col("pickup_datetime") < expected_end)
+                ),
+                F.lit("R003"),
+            ),
+            F.when(
+                ~F.col("trip_duration_minutes").between(0.01, 1440.0),
+                F.lit("R004"),
+            ),
+            F.when(~F.col("trip_distance").between(0.0, 200.0), F.lit("R005")),
+            F.when(~F.col("fare_amount").between(0.0, 1000.0), F.lit("R006")),
+            F.when(~F.col("total_amount").between(0.0, 2000.0), F.lit("R007")),
+            F.when(~F.col("pickup_location_id").between(1, 265), F.lit("R008")),
+            F.when(~F.col("dropoff_location_id").between(1, 265), F.lit("R009")),
+        )
+    ),
+)
+
+dedupe_window = Window.partitionBy("trip_id").orderBy(
+    F.col("processed_at_utc").desc()
+)
+ranked = with_failures.withColumn("_dedupe_rank", F.row_number().over(dedupe_window))
+validated = ranked.withColumn(
+    "_dq_failure_reasons",
+    F.when(
+        F.col("_dedupe_rank") > 1,
+        F.array_union(F.col("_dq_failure_reasons"), F.array(F.lit("R010"))),
+    ).otherwise(F.col("_dq_failure_reasons")),
+)
+
+failed = validated.filter(F.size("_dq_failure_reasons") > 0)
+passed = validated.filter(F.size("_dq_failure_reasons") == 0).drop(
+    "_dq_failure_reasons", "_dedupe_rank"
+)
+
+failed_to_write = failed.select(
+    F.col("trip_id").alias("pk"),
+    F.lit(run_id).alias("run_id"),
+    F.lit("nyc_taxi_trip").alias("dataset_name"),
+    F.to_json(F.struct(*[F.col(c) for c in typed.columns])).alias("record_data"),
+    F.to_json("_dq_failure_reasons").alias("failure_reasons"),
+    F.current_timestamp().alias("failed_at_utc"),
+)
+if not failed_to_write.rdd.isEmpty():
+    failed_to_write.write.format("delta").mode("append").saveAsTable(
+        "tbl_nyc_taxi_dq_failed_rows"
+    )
+elif not spark.catalog.tableExists("tbl_nyc_taxi_dq_failed_rows"):
+    failed_to_write.write.format("delta").mode("overwrite").saveAsTable(
+        "tbl_nyc_taxi_dq_failed_rows"
+    )
+
+total_rows = typed.count()
+passed_rows = passed.count()
+failed_rows = failed.count()
+log_df = spark.createDataFrame(
+    [
+        (
+            run_id,
+            "nyc_taxi_trip",
+            processed_at,
+            total_rows,
+            passed_rows,
+            failed_rows,
+            int(process_year),
+            int(process_month),
+            environment,
+        )
+    ],
+    "run_id string, dataset_name string, run_time timestamp, total_rows long, "
+    "passed_rows long, failed_rows long, source_year int, source_month int, "
+    "environment string",
+)
+log_df.write.format("delta").mode("append").saveAsTable("tbl_nyc_taxi_dq_run_log")
+
+if spark.catalog.tableExists("tbl_nyc_taxi_trip"):
+    DeltaTable.forName(spark, "tbl_nyc_taxi_trip").delete(
+        (F.col("source_year") == int(process_year))
+        & (F.col("source_month") == int(process_month))
+    )
+    passed.write.format("delta").mode("append").saveAsTable("tbl_nyc_taxi_trip")
+else:
+    passed.write.format("delta").mode("overwrite").partitionBy(
+        "source_year", "source_month"
+    ).saveAsTable("tbl_nyc_taxi_trip")
+
+zone = zone_raw.select(
+    F.col("LocationID").cast("int").alias("location_id"),
+    F.trim("Borough").alias("borough"),
+    F.trim("Zone").alias("zone_name"),
+    F.trim("service_zone").alias("service_zone"),
+).dropDuplicates(["location_id"])
+zone.write.format("delta").mode("overwrite").option(
+    "overwriteSchema", "true"
+).saveAsTable("tbl_nyc_taxi_zone")
+
+for table_name in (
+    "tbl_nyc_taxi_trip",
+    "tbl_nyc_taxi_zone",
+    "tbl_nyc_taxi_dq_rules",
+    "tbl_nyc_taxi_dq_run_log",
+    "tbl_nyc_taxi_dq_failed_rows",
+):
+    spark.sql(f"OPTIMIZE {table_name}")
+
+if passed_rows == 0 or passed_rows + failed_rows != total_rows:
+    raise RuntimeError(
+        f"Silver validation failed: total={total_rows}, passed={passed_rows}, "
+        f"failed={failed_rows}"
+    )
+print(
+    f"Silver DQ completed: run_id={run_id}, total={total_rows:,}, "
+    f"passed={passed_rows:,}, failed={failed_rows:,}"
+)
+
+
 
 # METADATA ********************
 

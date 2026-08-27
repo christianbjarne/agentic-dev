@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Eventhouse",
+    "displayName": "NYC Taxi Eventhouse",
+    "description": "NYC Taxi real-time Eventhouse (dev)"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "68d5d9e1-3c69-9408-4cc7-af846e17a20c"
+  }
+}

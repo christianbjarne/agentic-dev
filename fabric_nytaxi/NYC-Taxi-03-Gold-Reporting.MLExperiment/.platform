@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "MLExperiment",
+    "displayName": "NYC-Taxi-03-Gold-Reporting"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "f2f12ff6-c2e9-a127-4488-1545127e21aa"
+  }
+}

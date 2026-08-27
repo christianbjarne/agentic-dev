@@ -1,0 +1,84 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.4.0/schema.json",
+  "name": "ml_tripsdonut",
+  "position": {
+    "x": 424,
+    "y": 224,
+    "z": 50,
+    "width": 360,
+    "height": 230
+  },
+  "visual": {
+    "visualType": "donutChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "cluster_label"
+                }
+              },
+              "queryRef": "ml_zone_clusters.cluster_label",
+              "nativeQueryRef": "cluster_label"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "ML Segment Trips"
+                }
+              },
+              "queryRef": "ml_zone_clusters.ML Segment Trips",
+              "nativeQueryRef": "ML Segment Trips"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Trips Share by Segment'"
+                }
+              }
+            },
+            "heading": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Heading3'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

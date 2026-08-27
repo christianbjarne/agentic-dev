@@ -1,0 +1,28 @@
+[
+  {
+    "name": "src_tbl_nyc_taxi_zone",
+    "path": "/Tables",
+    "target": {
+      "type": "OneLake",
+      "oneLake": {
+        "path": "Tables/tbl_nyc_taxi_zone",
+        "itemId": "21a4365d-2394-be94-4596-836b25d46af5",
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "artifactType": "Lakehouse"
+      }
+    }
+  },
+  {
+    "name": "src_tbl_nyc_taxi_trip",
+    "path": "/Tables",
+    "target": {
+      "type": "OneLake",
+      "oneLake": {
+        "path": "Tables/tbl_nyc_taxi_trip",
+        "itemId": "21a4365d-2394-be94-4596-836b25d46af5",
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "artifactType": "Lakehouse"
+      }
+    }
+  }
+]

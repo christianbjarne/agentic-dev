@@ -1,0 +1,21 @@
+/// Taxi payment-method dimension.
+table dim_payment
+
+	/// Payment key.
+	column payment_type
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: payment_type
+
+	/// Payment method.
+	column payment_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: payment_type_name
+
+	partition dim_payment = entity
+		mode: directLake
+		source
+			entityName: tbl_nyc_taxi_dim_payment
+			expressionSource: DirectLake
+

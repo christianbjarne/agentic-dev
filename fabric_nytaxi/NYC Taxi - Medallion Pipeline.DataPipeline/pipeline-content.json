@@ -1,15 +1,29 @@
 {
   "properties": {
-    "description": "Sequential Bronze to Silver to Gold processing for 2025 NYC TLC data",
+    "description": "Validation-gated medallion orchestration",
     "activities": [
       {
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "cde25668-31e2-89e5-4c7c-1014d0e954c8",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "process_year": {
+              "value": 2025,
+              "type": "int"
+            },
+            "process_month": {
+              "value": 1,
+              "type": "int"
+            },
+            "environment": {
+              "value": "dev",
+              "type": "string"
+            }
+          }
         },
         "policy": {
-          "timeout": "0.06:00:00",
+          "timeout": "0.02:00:00",
           "retry": 1,
           "retryIntervalInSeconds": 60
         },
@@ -20,14 +34,28 @@
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "a46fb408-13ab-9d63-4f32-f39fa3033078",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "process_year": {
+              "value": 2025,
+              "type": "int"
+            },
+            "process_month": {
+              "value": 1,
+              "type": "int"
+            },
+            "environment": {
+              "value": "dev",
+              "type": "string"
+            }
+          }
         },
         "policy": {
-          "timeout": "0.06:00:00",
+          "timeout": "0.02:00:00",
           "retry": 1,
           "retryIntervalInSeconds": 60
         },
-        "name": "Silver Dimensional",
+        "name": "Silver DQ",
         "dependsOn": [
           {
             "activity": "Bronze Ingestion",
@@ -41,23 +69,51 @@
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "b5e95961-de6d-a8ef-4750-e1b90eecdd7d",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "process_year": {
+              "value": 2025,
+              "type": "int"
+            },
+            "process_month": {
+              "value": 1,
+              "type": "int"
+            },
+            "environment": {
+              "value": "dev",
+              "type": "string"
+            }
+          }
         },
         "policy": {
-          "timeout": "0.06:00:00",
+          "timeout": "0.02:00:00",
           "retry": 1,
           "retryIntervalInSeconds": 60
         },
-        "name": "Gold Reporting",
+        "name": "Gold Star Schema and ML",
         "dependsOn": [
           {
-            "activity": "Silver Dimensional",
+            "activity": "Silver DQ",
             "dependencyConditions": [
               "Succeeded"
             ]
           }
         ]
       }
-    ]
+    ],
+    "parameters": {
+      "process_year": {
+        "type": "int",
+        "defaultValue": 2025
+      },
+      "process_month": {
+        "type": "int",
+        "defaultValue": 1
+      },
+      "environment": {
+        "type": "string",
+        "defaultValue": "dev"
+      }
+    }
   }
 }

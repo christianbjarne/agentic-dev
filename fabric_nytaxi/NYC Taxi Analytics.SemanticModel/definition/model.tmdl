@@ -1,30 +1,15 @@
-/// Direct Lake semantic model for 2025 NYC TLC taxi and for-hire vehicle trip analytics.
-model 'NYC Taxi Analytics'
-	defaultMode: directLake
+model Model
 	culture: en-US
 	defaultPowerBIDataSourceVersion: powerBI_V3
 	discourageImplicitMeasures
-	sourceQueryCulture: en-US
-	discourageCompositeModels
-	directLakeBehavior: directLakeOnly
-	dataAccessOptions
-		legacyRedirects
-		returnErrorValuesAsNull
 
 annotation PBI_ProTooling = ["MCP-PBIModeling"]
 
-ref table Date
-ref table 'Pickup Zone'
-ref table 'Dropoff Zone'
-ref table 'Service Type'
-ref table Vendor
-ref table 'Rate Code'
-ref table 'Payment Type'
-ref table 'Trip Type'
-ref table 'High Volume Provider'
-ref table 'Yellow Trips'
-ref table 'Green Trips'
-ref table 'For-Hire Vehicle Trips'
-ref table 'High Volume For-Hire Vehicle Trips'
-ref table 'Monthly Trip Summary'
+ref table fact_trips
+ref table dim_date
+ref table dim_zone
+ref table dim_vendor
+ref table dim_payment
+ref table dim_ratecode
+ref table ml_zone_clusters
 

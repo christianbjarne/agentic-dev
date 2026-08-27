@@ -1,0 +1,52 @@
+[
+  {
+    "uniqueIdentifier": "424a8a79-1c03-4744-9467-13f8383c8991",
+    "payload": {
+      "name": "EventStream",
+      "metadata": {
+        "eventstreamArtifactId": "fc22559d-901e-4eb3-81cb-b96b1703632a"
+      }
+    },
+    "type": "eventstreamSource-v1"
+  },
+  {
+    "uniqueIdentifier": "cdbaccf4-af10-4202-9122-3f9532af30de",
+    "payload": {
+      "name": "NYCTaxiLiveStream-stream",
+      "definition": {
+        "type": "Event",
+        "instance": "{\"templateId\":\"SourceEvent\",\"templateVersion\":\"1.1\",\"steps\":[{\"name\":\"SourceEventStep\",\"id\":\"24e56717-b646-4359-a10b-51c0a3b14bf4\",\"rows\":[{\"name\":\"SourceSelector\",\"kind\":\"SourceReference\",\"arguments\":[{\"name\":\"entityId\",\"type\":\"string\",\"value\":\"424a8a79-1c03-4744-9467-13f8383c8991\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "984ebb46-de7a-475b-9172-d10e2ecb9704",
+    "payload": {
+      "name": "Run Bronze validation (disabled rule action)",
+      "fabricItem": {
+        "itemId": "cde25668-31e2-89e5-4c7c-1014d0e954c8",
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "itemType": "SynapseNotebook"
+      },
+      "jobType": "RunNotebook"
+    },
+    "type": "fabricItemAction-v1"
+  },
+  {
+    "uniqueIdentifier": "1bae47af-77e2-49bc-ab53-41f6fd3dc498",
+    "payload": {
+      "name": "High fare anomaly (disabled)",
+      "description": "Created by: skills-for-fabric. Safe verification rule; disabled and has no external action.",
+      "definition": {
+        "type": "Rule",
+        "instance": "{\"templateId\":\"EventTrigger\",\"templateVersion\":\"1.2.4\",\"steps\":[{\"name\":\"FieldsDefaultsStep\",\"id\":\"c7d9e3cb-b910-4e2b-83bd-095d028497f9\",\"rows\":[{\"name\":\"EventSelector\",\"kind\":\"Event\",\"arguments\":[{\"kind\":\"EventReference\",\"type\":\"complex\",\"arguments\":[{\"name\":\"entityId\",\"type\":\"string\",\"value\":\"cdbaccf4-af10-4202-9122-3f9532af30de\"}],\"name\":\"event\"}]}]},{\"name\":\"EventDetectStep\",\"id\":\"116f4342-74db-4e51-b679-507c62c25068\",\"rows\":[{\"name\":\"EventFieldSelector\",\"kind\":\"EventField\",\"arguments\":[{\"name\":\"fieldName\",\"type\":\"string\",\"value\":\"total_amount\"}]},{\"name\":\"NumberValueCondition\",\"kind\":\"NumberValueCondition\",\"arguments\":[{\"name\":\"op\",\"type\":\"string\",\"value\":\"IsGreaterThan\"},{\"name\":\"threshold\",\"type\":\"number\",\"value\":250.0}]}]},{\"name\":\"ActStep\",\"id\":\"fb3e7b10-b573-4d23-a2d3-68289b1f8756\",\"rows\":[{\"name\":\"FabricItemBinding\",\"kind\":\"FabricItemInvocation\",\"arguments\":[{\"name\":\"workspaceId\",\"type\":\"string\",\"value\":\"00000000-0000-0000-0000-000000000000\"},{\"name\":\"itemId\",\"type\":\"string\",\"value\":\"cde25668-31e2-89e5-4c7c-1014d0e954c8\"},{\"name\":\"itemType\",\"type\":\"string\",\"value\":\"SynapseNotebook\"},{\"name\":\"jobType\",\"type\":\"string\",\"value\":\"RunNotebook\"},{\"name\":\"fabricJobConnectionDocumentId\",\"type\":\"string\",\"value\":\"984ebb46-de7a-475b-9172-d10e2ecb9704\"},{\"name\":\"additionalInformation\",\"type\":\"array\",\"values\":[]},{\"name\":\"parameters\",\"type\":\"array\",\"values\":[]}]}]}]}",
+        "settings": {
+          "shouldRun": false,
+          "shouldApplyRuleOnUpdate": false
+        }
+      }
+    },
+    "type": "timeSeriesView-v1"
+  }
+]

@@ -1,0 +1,15 @@
+[
+  {
+    "name": "bronze_taxi",
+    "path": "/Files",
+    "target": {
+      "type": "OneLake",
+      "oneLake": {
+        "path": "Files/nyc_taxi",
+        "itemId": "e6e1021d-9cb7-9357-4141-58a5f6a83a1d",
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "artifactType": "Lakehouse"
+      }
+    }
+  }
+]

@@ -1,0 +1,33 @@
+/// NYC TLC taxi-zone dimension.
+table dim_zone
+
+	/// TLC taxi-zone key.
+	column location_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: location_id
+
+	/// New York City borough.
+	column borough
+		dataType: string
+		summarizeBy: none
+		sourceColumn: borough
+
+	/// Taxi-zone name.
+	column zone
+		dataType: string
+		summarizeBy: none
+		sourceColumn: zone_name
+
+	/// TLC service-zone classification.
+	column service_zone
+		dataType: string
+		summarizeBy: none
+		sourceColumn: service_zone
+
+	partition dim_zone = entity
+		mode: directLake
+		source
+			entityName: tbl_nyc_taxi_dim_zone
+			expressionSource: DirectLake
+

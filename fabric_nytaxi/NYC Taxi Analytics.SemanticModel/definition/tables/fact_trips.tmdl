@@ -1,0 +1,137 @@
+/// Validated NYC TLC Yellow Taxi trips. Use explicit measures for analysis.
+table fact_trips
+
+	/// Count of quality-approved taxi trips.
+	measure 'Total Trips' = COUNTROWS(fact_trips)
+		formatString: #,0
+
+	/// Total amount charged across quality-approved taxi trips.
+	measure 'Total Revenue' = SUM(fact_trips[total_amount])
+		formatString: $#,0
+
+	/// Average metered fare per trip.
+	measure 'Avg Fare' = AVERAGE(fact_trips[fare_amount])
+		formatString: $#,0.00
+
+	/// Total tips across quality-approved taxi trips.
+	measure 'Total Tips' = SUM(fact_trips[tip_amount])
+		formatString: $#,0
+
+	/// Total reported passengers.
+	measure 'Total Passengers' = SUM(fact_trips[passenger_count])
+		formatString: #,0
+
+	/// Stable deterministic trip identifier.
+	column trip_id
+		dataType: string
+		summarizeBy: none
+		sourceColumn: trip_id
+
+	/// Date key in YYYYMMDD format for pickup date.
+	column pickup_date_key
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: pickup_date_key
+
+	/// Trip pickup timestamp.
+	column pickup_datetime
+		dataType: dateTime
+		summarizeBy: none
+		sourceColumn: pickup_datetime
+
+	/// Trip drop-off timestamp.
+	column dropoff_datetime
+		dataType: dateTime
+		summarizeBy: none
+		sourceColumn: dropoff_datetime
+
+	/// Hour of pickup from 0 to 23.
+	column pickup_hour
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: pickup_hour
+
+	/// NYC TLC pickup zone key.
+	column pickup_location_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: pickup_location_id
+
+	/// NYC TLC drop-off zone key.
+	column dropoff_location_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: dropoff_location_id
+
+	/// Taxi technology provider key.
+	column vendor_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: vendor_id
+
+	/// TLC rate-code key.
+	column ratecode_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: ratecode_id
+
+	/// Payment method key.
+	column payment_type
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: payment_type
+
+	/// Reported passengers.
+	column passenger_count
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: passenger_count
+
+	/// Trip distance in miles.
+	column trip_distance
+		dataType: double
+		summarizeBy: none
+		sourceColumn: trip_distance
+
+	/// Trip duration in minutes.
+	column trip_duration_minutes
+		dataType: double
+		summarizeBy: none
+		sourceColumn: trip_duration_minutes
+
+	/// Metered fare before extras.
+	column fare_amount
+		dataType: double
+		summarizeBy: none
+		sourceColumn: fare_amount
+
+	/// Tip amount.
+	column tip_amount
+		dataType: double
+		summarizeBy: none
+		sourceColumn: tip_amount
+
+	/// Tolls amount.
+	column tolls_amount
+		dataType: double
+		summarizeBy: none
+		sourceColumn: tolls_amount
+
+	/// Total charged amount.
+	column total_amount
+		dataType: double
+		summarizeBy: none
+		sourceColumn: total_amount
+
+	/// Taxi service category.
+	column service_type
+		dataType: string
+		summarizeBy: none
+		sourceColumn: service_type
+
+	partition fact_trips = entity
+		mode: directLake
+		source
+			entityName: tbl_nyc_taxi_fact_trip
+			expressionSource: DirectLake
+

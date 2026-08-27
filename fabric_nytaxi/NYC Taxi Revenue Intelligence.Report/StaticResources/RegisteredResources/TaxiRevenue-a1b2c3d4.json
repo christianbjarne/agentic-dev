@@ -1,0 +1,106 @@
+{
+  "name": "TaxiRevenue-a1b2c3d4.json",
+  "dataColors": [
+    "#F3C911",
+    "#4C5D8A",
+    "#4A8DDC",
+    "#33AE81",
+    "#DC5B57",
+    "#95C8F0",
+    "#DD915F",
+    "#9A64A0",
+    "#6EA4E3",
+    "#707DA1"
+  ],
+  "background": "#FFFFFF",
+  "foreground": "#1A1A2E",
+  "tableAccent": "#4C5D8A",
+  "textClasses": {
+    "title": {
+      "fontFace": "'Segoe UI Semibold'",
+      "color": "#1A1A2E"
+    },
+    "callout": {
+      "fontFace": "'Segoe UI'",
+      "color": "#1A1A2E"
+    }
+  },
+  "visualStyles": {
+    "*": {
+      "*": {
+        "title": [
+          {
+            "show": true,
+            "fontFamily": "'Segoe UI Semibold'",
+            "fontSize": 12,
+            "bold": true,
+            "fontColor": {
+              "solid": {
+                "color": "#1A1A2E"
+              }
+            }
+          }
+        ],
+        "background": [
+          {
+            "show": true,
+            "color": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "transparency": 0
+          }
+        ],
+        "border": [
+          {
+            "show": true,
+            "color": {
+              "solid": {
+                "color": "#E3E3EC"
+              }
+            },
+            "radius": 8,
+            "width": 1
+          }
+        ],
+        "dropShadow": [
+          {
+            "show": true,
+            "color": {
+              "solid": {
+                "color": "#21232C"
+              }
+            },
+            "position": "Outer",
+            "preset": "BottomRight"
+          }
+        ]
+      }
+    },
+    "page": {
+      "*": {
+        "background": [
+          {
+            "color": {
+              "solid": {
+                "color": "#EFF1F5"
+              }
+            },
+            "transparency": 0
+          }
+        ],
+        "outspace": [
+          {
+            "color": {
+              "solid": {
+                "color": "#EFF1F5"
+              }
+            },
+            "transparency": 0
+          }
+        ]
+      }
+    }
+  }
+}

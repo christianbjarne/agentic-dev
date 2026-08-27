@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Reflex",
+    "displayName": "NYC Taxi Fare Anomaly",
+    "description": "Safe NYC Taxi fare anomaly detection (dev); no external actions"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "af835f54-b58a-bdc3-462b-3b28965e9f41"
+  }
+}

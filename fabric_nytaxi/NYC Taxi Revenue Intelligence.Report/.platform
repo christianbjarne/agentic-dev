@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "NYC Taxi Revenue Intelligence",
+    "description": "Five-page NYC Taxi revenue, operations, tipping, and ML intelligence"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "239a5067-7ee5-94e4-4124-aeefb02c5200"
+  }
+}

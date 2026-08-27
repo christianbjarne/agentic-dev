@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Lakehouse",
+    "displayName": "LH_Silver",
+    "description": "NYC Taxi Silver layer (dev)"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "21a4365d-2394-be94-4596-836b25d46af5"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "sources": [
+    {
+      "id": "b82b45f2-b187-40ff-a5b9-b8af8447f298",
+      "name": "TaxiSample",
+      "type": "SampleData",
+      "properties": {
+        "type": "YellowTaxi"
+      }
+    }
+  ],
+  "destinations": [
+    {
+      "id": "0139eac9-3723-468f-a136-836b94e03dcd",
+      "name": "TaxiEventhouse",
+      "type": "Eventhouse",
+      "properties": {
+        "dataIngestionMode": "ProcessedIngestion",
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "itemId": "b3dfdce4-766a-9bb0-4098-3b85b90680f4",
+        "databaseName": "NYC Taxi Realtime",
+        "tableName": "TaxiEvents",
+        "inputSerialization": {
+          "type": "Json",
+          "properties": {
+            "encoding": "UTF8"
+          }
+        }
+      },
+      "inputNodes": [
+        {
+          "name": "TaxiStream"
+        }
+      ]
+    },
+    {
+      "id": "b4de0391-70ab-41d8-b4b8-651868ce3f2d",
+      "name": "TaxiActivator",
+      "type": "Activator",
+      "properties": {
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "itemId": "af835f54-b58a-bdc3-462b-3b28965e9f41",
+        "inputSerialization": {
+          "type": "Json",
+          "properties": {
+            "encoding": "UTF8"
+          }
+        }
+      },
+      "inputNodes": [
+        {
+          "name": "TaxiStream"
+        }
+      ]
+    }
+  ],
+  "streams": [
+    {
+      "id": "1ef0a348-5162-4942-b254-73b01a3a1728",
+      "name": "TaxiStream",
+      "type": "DefaultStream",
+      "properties": {},
+      "inputNodes": [
+        {
+          "name": "TaxiSample"
+        }
+      ]
+    }
+  ],
+  "operators": [],
+  "compatibilityLevel": "1.1"
+}

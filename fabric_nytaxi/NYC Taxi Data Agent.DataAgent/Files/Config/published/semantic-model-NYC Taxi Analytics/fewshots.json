@@ -1,0 +1,15 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/dataAgent/definition/fewShots/1.0.0/schema.json",
+  "fewShots": [
+    {
+      "id": "d15158f4-5cdf-4d94-a588-deddb10234de",
+      "question": "What are total trips and total revenue?",
+      "query": "EVALUATE ROW(\"Trips\", [Total Trips], \"Revenue\", [Total Revenue])"
+    },
+    {
+      "id": "45a98682-61f6-4308-9010-4e2770ce9123",
+      "question": "Which borough generated the most revenue?",
+      "query": "EVALUATE TOPN(1, SUMMARIZECOLUMNS(dim_zone[borough], \"Revenue\", [Total Revenue]), [Revenue], DESC)"
+    }
+  ]
+}
