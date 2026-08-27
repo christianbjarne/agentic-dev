@@ -1,0 +1,33 @@
+name: Copilot Setup Steps
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/agents/**
+      - .github/scripts/**
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/agents/**
+      - .github/scripts/**
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Fabric validator is executable
+        run: python -m py_compile .github/scripts/validate_fabric_notebooks.py
