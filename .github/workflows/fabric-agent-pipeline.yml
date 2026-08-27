@@ -30,6 +30,7 @@ jobs:
     outputs:
       pr_number: ${{ steps.review.outputs.pr_number }}
       reviewed_sha: ${{ steps.review.outputs.reviewed_sha }}
+      proposal_created: ${{ steps.review.outputs.proposal_created }}
 
     steps:
       - name: Checkout proposed branch
@@ -70,8 +71,14 @@ jobs:
 
           reviewed_sha="$(git rev-parse HEAD)"
           git diff --check "origin/${TARGET_BRANCH}...HEAD"
+          git show \
+            "origin/${TARGET_BRANCH}:.github/scripts/validate_fabric_notebooks.py" \
+            > /tmp/validate_fabric_notebooks.py
+          git show \
+            "origin/${TARGET_BRANCH}:.github/scripts/fix_fabric_notebook_violations.py" \
+            > /tmp/fix_fabric_notebook_violations.py
           set +e
-          python .github/scripts/validate_fabric_notebooks.py \
+          python /tmp/validate_fabric_notebooks.py --root "$GITHUB_WORKSPACE" \
             > /tmp/agent-review.log 2>&1
           validator_exit="$?"
           set -e
@@ -92,6 +99,49 @@ jobs:
             finding_count="$(
               grep -cE ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
             )"
+            set +e
+            python /tmp/fix_fabric_notebook_violations.py \
+              --root "$GITHUB_WORKSPACE" \
+              > /tmp/agent-fix.log 2>&1
+            fixer_exit="$?"
+            set -e
+
+            if [ "$fixer_exit" -ne 0 ]; then
+              {
+                echo "**Decision: REQUEST CHANGES**"
+                echo
+                echo "Found ${finding_count} Fabric guideline violations:"
+                echo
+                echo '```text'
+                grep -E ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
+                echo '```'
+                echo
+                echo "The agent could not produce a safe automatic patch:"
+                echo
+                echo '```text'
+                cat /tmp/agent-fix.log
+                echo '```'
+              } >> /tmp/review.md
+
+              gh pr comment "$pr_number" --body-file /tmp/review.md
+              gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/statuses/${reviewed_sha}" \
+                -f state=failure \
+                -f context=validate-review-context \
+                -f description="${finding_count} violations require manual fixes" \
+                -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              exit 1
+            fi
+
+            if ! python /tmp/validate_fabric_notebooks.py \
+              --root "$GITHUB_WORKSPACE" > /tmp/proposal-validation.log 2>&1; then
+              cat /tmp/proposal-validation.log
+              echo "The proposed patch does not resolve all findings."
+              exit 1
+            fi
+
+            git diff --binary > "$GITHUB_WORKSPACE/agent-proposal.patch"
+            git reset --hard HEAD
             {
               echo "**Decision: REQUEST CHANGES**"
               echo
@@ -101,17 +151,26 @@ jobs:
               grep -E ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
               echo '```'
               echo
-              echo "Fix these findings before restarting this pipeline."
+              echo "### Agent-proposed correction"
+              echo
+              cat /tmp/agent-fix.log
+              echo
+              echo "The proposed patch resolves all findings in validation."
+              echo "Approve the **fabric-agent-change-approval** deployment to commit it."
             } >> /tmp/review.md
 
             gh pr comment "$pr_number" --body-file /tmp/review.md
             gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/statuses/${reviewed_sha}" \
-              -f state=failure \
+              -f state=pending \
               -f context=validate-review-context \
-              -f description="${finding_count} Fabric guideline violations found" \
+              -f description="Agent fix proposal awaiting approval" \
               -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            exit 1
+
+            echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+            echo "reviewed_sha=$reviewed_sha" >> "$GITHUB_OUTPUT"
+            echo "proposal_created=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           {
@@ -138,6 +197,16 @@ jobs:
 
           echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
           echo "reviewed_sha=$reviewed_sha" >> "$GITHUB_OUTPUT"
+          echo "proposal_created=false" >> "$GITHUB_OUTPUT"
+
+      - name: Store agent proposal
+        if: steps.review.outputs.proposal_created == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabric-agent-proposal-${{ github.run_id }}
+          path: agent-proposal.patch
+          if-no-files-found: error
+          retention-days: 1
 
   apply-approved-proposal:
     name: Apply approved proposal
@@ -158,6 +227,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Download approved agent proposal
+        if: needs.agent-review.outputs.proposal_created == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: fabric-agent-proposal-${{ github.run_id }}
+          path: ${{ runner.temp }}/fabric-agent-proposal
 
       - name: Apply proposal and validate committed code
         id: apply
@@ -189,6 +265,12 @@ jobs:
             gh pr comment "$PR_NUMBER" \
               --body "The approved proposal could not be applied because these files conflict with ${TARGET_BRANCH}: ${conflicts}"
             exit 1
+          fi
+
+          if [ "${{ needs.agent-review.outputs.proposal_created }}" = "true" ]; then
+            git apply "$RUNNER_TEMP/fabric-agent-proposal/agent-proposal.patch"
+            git add --all
+            git commit -m "Apply approved Fabric agent fixes"
           fi
 
           python .github/scripts/validate_fabric_notebooks.py
