@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path(__file__).resolve().parents[2],
+        default=Path.cwd(),
         help="Repository root to scan.",
     )
     args = parser.parse_args(argv)
