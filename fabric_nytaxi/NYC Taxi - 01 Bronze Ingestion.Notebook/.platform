@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "NYC Taxi - 01 Bronze Ingestion",
+    "description": "NYC TLC 2025 medallion architecture notebook"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "cde25668-31e2-89e5-4c7c-1014d0e954c8"
+  }
+}

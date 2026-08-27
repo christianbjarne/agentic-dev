@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "NYC Taxi - 02 Silver Dimensional",
+    "description": "NYC TLC 2025 medallion architecture notebook"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "a46fb408-13ab-9d63-4f32-f39fa3033078"
+  }
+}

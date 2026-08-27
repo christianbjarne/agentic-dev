@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "NYC Taxi - 03 Gold Reporting",
+    "description": "NYC TLC 2025 medallion architecture notebook"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "b5e95961-de6d-a8ef-4750-e1b90eecdd7d"
+  }
+}

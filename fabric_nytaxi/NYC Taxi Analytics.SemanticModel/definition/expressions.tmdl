@@ -1,0 +1,8 @@
+/// OneLake connection to the NYC taxi medallion lakehouse.
+expression 'DirectLake - NYC Taxi Analytics' =
+		let
+		    Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/f39ba351-8523-4084-9da1-ed33e4eff8ed/52bc2e1b-964f-4930-bc63-c8af5e491bf2", [HierarchicalNavigation=true])
+		in
+		    Source
+	lineageTag: 775811ac-851a-498b-a6e6-91dd94c561a4
+

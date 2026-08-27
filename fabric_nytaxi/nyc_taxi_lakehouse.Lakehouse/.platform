@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Lakehouse",
+    "displayName": "nyc_taxi_lakehouse",
+    "description": "Schema-enabled medallion lakehouse for 2025 NYC TLC trip data"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "5e491bf2-c8af-bc63-4930-964f52bc2e1b"
+  }
+}

@@ -1,0 +1,25 @@
+/// TLC trip-record family: yellow taxi, green taxi, FHV, or high-volume FHV.
+table 'Service Type'
+	lineageTag: d50ecf5f-8d7f-4153-a76e-7830340c2e98
+
+	column 'Service Type Key'
+		dataType: int64
+		isHidden
+		isKey
+		lineageTag: 4a5ec48f-568b-4daa-a9d9-35d0587a8503
+		summarizeBy: none
+		sourceColumn: service_type_key
+
+	column 'Service Type'
+		dataType: string
+		lineageTag: b0830211-dd71-4d99-9624-02d5dc4fbce8
+		summarizeBy: none
+		sourceColumn: service_type_name
+
+	partition 'Service Type' = entity
+		mode: directLake
+		source
+			entityName: dim_service_type
+			schemaName: silver
+			expressionSource: 'DirectLake - NYC Taxi Analytics'
+

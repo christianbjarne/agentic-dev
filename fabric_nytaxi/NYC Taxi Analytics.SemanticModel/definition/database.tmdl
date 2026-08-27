@@ -1,0 +1,4 @@
+/// Direct Lake semantic model for the 2025 NYC TLC medallion lakehouse
+database
+	compatibilityLevel: 1702
+

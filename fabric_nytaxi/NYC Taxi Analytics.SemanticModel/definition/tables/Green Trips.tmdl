@@ -1,0 +1,140 @@
+/// Cleaned 2025 green taxi trips at one row per trip.
+table 'Green Trips'
+	lineageTag: 6e7c0774-2e74-4bc9-b0c9-4547d31ca749
+
+	/// Count of cleaned green taxi fact rows.
+	measure 'Green Trip Count' = COUNTROWS('Green Trips')
+		formatString: #,##0
+		displayFolder: Trip Detail
+		lineageTag: 7acffeda-c4fc-48dd-bce9-146062af037d
+
+	column 'Pickup Date Key'
+		dataType: int64
+		isHidden
+		lineageTag: b88fc356-6a30-4a3d-b4ba-71e4408e84c3
+		summarizeBy: none
+		sourceColumn: pickup_date_key
+
+	column 'Pickup Location ID'
+		dataType: int64
+		isHidden
+		lineageTag: 91df726f-209d-4a4b-ae21-1d3172eab04e
+		summarizeBy: none
+		sourceColumn: pickup_location_id
+
+	column 'Dropoff Location ID'
+		dataType: int64
+		isHidden
+		lineageTag: 107fab1a-e95e-4608-9179-e852028bb8c2
+		summarizeBy: none
+		sourceColumn: dropoff_location_id
+
+	column 'Service Type Key'
+		dataType: int64
+		isHidden
+		lineageTag: e8853ea2-4532-4da3-a2f6-1c76def671a7
+		summarizeBy: none
+		sourceColumn: service_type_key
+
+	column 'Vendor ID'
+		dataType: int64
+		isHidden
+		lineageTag: ad2c4bb2-f4a2-4b8b-beb5-8a3d1e92c741
+		summarizeBy: none
+		sourceColumn: vendor_id
+
+	column 'Rate Code ID'
+		dataType: int64
+		isHidden
+		lineageTag: 840359e4-3c04-4357-a8bc-914bc446bcef
+		summarizeBy: none
+		sourceColumn: rate_code_id
+
+	column 'Payment Type ID'
+		dataType: int64
+		isHidden
+		lineageTag: c6656af2-d2a7-40d5-8158-795114c165fc
+		summarizeBy: none
+		sourceColumn: payment_type_id
+
+	column 'Trip Type ID'
+		dataType: int64
+		isHidden
+		lineageTag: f5fbe8ac-8ffb-47d1-9bf3-9b33fd12c6a4
+		summarizeBy: none
+		sourceColumn: trip_type_id
+
+	/// Hour of day when the trip began.
+	column 'Pickup Hour'
+		dataType: int64
+		lineageTag: 364c5287-722d-42ec-ad79-98334ef1d4b5
+		summarizeBy: none
+		sourceColumn: pickup_hour
+
+	column 'Passenger Count'
+		dataType: int64
+		isHidden
+		lineageTag: 00b2061a-12cb-47e8-ae98-2126d0282f97
+		sourceColumn: passenger_count
+
+	column 'Trip Distance'
+		dataType: decimal
+		isHidden
+		lineageTag: d513b8b1-1925-4805-8fac-fb3efe8a090e
+		sourceColumn: trip_distance
+
+	column 'Trip Duration Minutes'
+		dataType: decimal
+		isHidden
+		lineageTag: a6bbd598-1644-489e-8d39-4516f220555d
+		sourceColumn: trip_duration_minutes
+
+	column 'Fare Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 24910977-092b-44c1-ad03-3d25869c084c
+		sourceColumn: fare_amount
+
+	column 'Tip Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 141595dd-faec-4156-a410-44cd6ad7865a
+		sourceColumn: tip_amount
+
+	column 'Tolls Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 196bfb6a-0b1d-4683-aa69-0f03b5f498b0
+		sourceColumn: tolls_amount
+
+	column 'Total Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: b5028727-98db-4779-8e37-6e5de683b06e
+		sourceColumn: total_amount
+
+	column 'Congestion Surcharge Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 74c4d991-82e4-4a42-aeb4-6de43fb68db0
+		sourceColumn: congestion_surcharge_amount
+
+	column 'Airport Fee Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: f091146e-6e90-4998-ae17-284df5fd2b97
+		sourceColumn: airport_fee_amount
+
+	column 'CBD Congestion Fee Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 704512f9-0c2e-4b01-aff5-390a618b5384
+		sourceColumn: cbd_congestion_fee_amount
+
+	partition 'Green Trips' = entity
+		mode: directLake
+		source
+			entityName: fact_green_trip
+			schemaName: silver
+			expressionSource: 'DirectLake - NYC Taxi Analytics'
+

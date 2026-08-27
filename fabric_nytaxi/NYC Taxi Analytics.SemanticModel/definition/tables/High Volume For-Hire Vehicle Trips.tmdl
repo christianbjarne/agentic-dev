@@ -1,0 +1,139 @@
+/// Cleaned 2025 high-volume for-hire vehicle trips at one row per trip.
+table 'High Volume For-Hire Vehicle Trips'
+	lineageTag: 179bc4de-3b35-461b-a9b7-9923edc71696
+
+	/// Count of cleaned high-volume FHV fact rows.
+	measure 'High Volume FHV Trip Count' = COUNTROWS('High Volume For-Hire Vehicle Trips')
+		formatString: #,##0
+		displayFolder: Trip Detail
+		lineageTag: cb48204d-46f5-447e-a911-d95621046e4d
+
+	column 'Pickup Date Key'
+		dataType: int64
+		isHidden
+		lineageTag: e31aedbe-4cdb-44cf-8dde-23e8980bd88d
+		summarizeBy: none
+		sourceColumn: pickup_date_key
+
+	column 'Pickup Location ID'
+		dataType: int64
+		isHidden
+		lineageTag: 6f231faa-869d-4383-bcce-7fb5b5b3d6f3
+		summarizeBy: none
+		sourceColumn: pickup_location_id
+
+	column 'Dropoff Location ID'
+		dataType: int64
+		isHidden
+		lineageTag: 5717498b-51a7-42a0-b30e-a465a2aef66c
+		summarizeBy: none
+		sourceColumn: dropoff_location_id
+
+	column 'Service Type Key'
+		dataType: int64
+		isHidden
+		lineageTag: 97a76636-ae2a-4206-9162-cd43ca75ea37
+		summarizeBy: none
+		sourceColumn: service_type_key
+
+	column 'Provider License Number'
+		dataType: string
+		isHidden
+		lineageTag: d59928eb-c3b6-4510-ab55-9cd0b96eaf04
+		summarizeBy: none
+		sourceColumn: hvfhs_license_num
+
+	/// Hour of day when the trip began.
+	column 'Pickup Hour'
+		dataType: int64
+		lineageTag: 846b9567-6b77-44b9-80c0-c29a2e2cc38d
+		summarizeBy: none
+		sourceColumn: pickup_hour
+
+	column 'Trip Distance'
+		dataType: decimal
+		isHidden
+		lineageTag: 27cc09c0-580c-4a8b-9e69-c32b5872cbab
+		sourceColumn: trip_distance
+
+	column 'Trip Duration Minutes'
+		dataType: decimal
+		isHidden
+		lineageTag: 8f869672-3894-433b-b611-f42385528349
+		sourceColumn: trip_duration_minutes
+
+	column 'Fare Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: f8a1cd68-1640-4af5-87a3-8ce8740faebb
+		sourceColumn: fare_amount
+
+	column 'Tip Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 23e38a4d-073b-406b-9592-3d5401b731a2
+		sourceColumn: tip_amount
+
+	column 'Tolls Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: b6f7ce35-534e-419b-8f4a-765e7ae5a116
+		sourceColumn: tolls_amount
+
+	column 'Total Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: f8c4feec-be0c-47bd-9993-105f2c6f0d90
+		sourceColumn: total_amount
+
+	column 'Congestion Surcharge Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 80ee367c-1e07-43c2-8633-06542d7c5d4d
+		sourceColumn: congestion_surcharge_amount
+
+	column 'Airport Fee Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 19df9c32-94f6-430d-a59f-a17b7256d0c4
+		sourceColumn: airport_fee_amount
+
+	column 'CBD Congestion Fee Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 93d18127-5828-4dbb-9074-63daff0d8038
+		sourceColumn: cbd_congestion_fee_amount
+
+	column 'Shared Request Flag'
+		dataType: string
+		lineageTag: ce89194d-e2ef-424a-89fa-f0a3bb752892
+		summarizeBy: none
+		sourceColumn: shared_request_flag
+
+	column 'Shared Match Flag'
+		dataType: string
+		lineageTag: 075c4f60-35b9-4d2d-9a83-75182552389c
+		summarizeBy: none
+		sourceColumn: shared_match_flag
+
+	/// Whether a wheelchair-accessible vehicle was requested.
+	column 'WAV Request Flag'
+		dataType: string
+		lineageTag: 8c4558ce-6bc4-4878-bf9b-e89abc40da14
+		summarizeBy: none
+		sourceColumn: wav_request_flag
+
+	/// Whether a wheelchair-accessible request was matched.
+	column 'WAV Match Flag'
+		dataType: string
+		lineageTag: cb118877-b1df-4938-a6be-8427951fd7f9
+		summarizeBy: none
+		sourceColumn: wav_match_flag
+
+	partition 'High Volume For-Hire Vehicle Trips' = entity
+		mode: directLake
+		source
+			entityName: fact_high_volume_fhv_trip
+			schemaName: silver
+			expressionSource: 'DirectLake - NYC Taxi Analytics'
+

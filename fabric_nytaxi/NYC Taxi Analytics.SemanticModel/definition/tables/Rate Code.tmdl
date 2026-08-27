@@ -1,0 +1,25 @@
+/// TLC fare-rate category applied to yellow and green taxi trips.
+table 'Rate Code'
+	lineageTag: e1d08b14-14de-4b1c-a682-2c5ec4789aec
+
+	column 'Rate Code ID'
+		dataType: int64
+		isHidden
+		isKey
+		lineageTag: 48aa7c7f-1c4b-48ec-90a5-766d05a3f5f9
+		summarizeBy: none
+		sourceColumn: rate_code_id
+
+	column 'Rate Code'
+		dataType: string
+		lineageTag: 5e37c9fa-e2e2-4300-ac10-b76285527678
+		summarizeBy: none
+		sourceColumn: rate_code_name
+
+	partition 'Rate Code' = entity
+		mode: directLake
+		source
+			entityName: dim_rate_code
+			schemaName: silver
+			expressionSource: 'DirectLake - NYC Taxi Analytics'
+
