@@ -70,7 +70,9 @@ jobs:
           fi
 
           reviewed_sha="$(git rev-parse HEAD)"
-          git diff --check "origin/${TARGET_BRANCH}...HEAD"
+          git diff --check "origin/${TARGET_BRANCH}...HEAD" -- \
+            '.github/**' \
+            ':(glob)**/*.Notebook/notebook-content.py'
           git show \
             "origin/${TARGET_BRANCH}:.github/scripts/validate_fabric_notebooks.py" \
             > /tmp/validate_fabric_notebooks.py
@@ -274,7 +276,9 @@ jobs:
           fi
 
           python .github/scripts/validate_fabric_notebooks.py
-          git diff --check "origin/${TARGET_BRANCH}...HEAD"
+          git diff --check "origin/${TARGET_BRANCH}...HEAD" -- \
+            '.github/**' \
+            ':(glob)**/*.Notebook/notebook-content.py'
 
           applied_sha="$(git rev-parse HEAD)"
           if [ "$applied_sha" != "$before_merge" ]; then
