@@ -1,0 +1,357 @@
+name: Fabric Agent Review, Approve, and Merge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: Branch containing the proposed changes
+        required: true
+        default: dev
+        type: string
+      target_branch:
+        description: Branch that receives the approved changes
+        required: true
+        default: main
+        type: string
+
+concurrency:
+  group: fabric-agent-${{ inputs.source_branch }}-${{ inputs.target_branch }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  agent-review:
+    name: Agent review and proposal
+    runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.review.outputs.pr_number }}
+      reviewed_sha: ${{ steps.review.outputs.reviewed_sha }}
+      proposal_created: ${{ steps.review.outputs.proposal_created }}
+
+    steps:
+      - name: Checkout proposed branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_branch }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Review code and publish proposal
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin "$TARGET_BRANCH"
+          pr_number="$(
+            gh pr list \
+              --base "$TARGET_BRANCH" \
+              --head "$SOURCE_BRANCH" \
+              --state open \
+              --limit 1 \
+              --json number \
+              --jq '.[0].number'
+          )"
+          if [ -z "$pr_number" ]; then
+            echo "No open ${SOURCE_BRANCH} -> ${TARGET_BRANCH} pull request exists."
+            exit 1
+          fi
+
+          reviewed_sha="$(git rev-parse HEAD)"
+          git diff --check "origin/${TARGET_BRANCH}...HEAD" -- \
+            '.github/**' \
+            ':(glob)**/*.Notebook/notebook-content.py'
+          git show \
+            "origin/${TARGET_BRANCH}:.github/scripts/validate_fabric_notebooks.py" \
+            > /tmp/validate_fabric_notebooks.py
+          git show \
+            "origin/${TARGET_BRANCH}:.github/scripts/fix_fabric_notebook_violations.py" \
+            > /tmp/fix_fabric_notebook_violations.py
+          set +e
+          python /tmp/validate_fabric_notebooks.py --root "$GITHUB_WORKSPACE" \
+            > /tmp/agent-review.log 2>&1
+          validator_exit="$?"
+          set -e
+
+          {
+            echo "## Fabric Agent Review"
+            echo
+            echo "Reviewed commit: \`${reviewed_sha}\`"
+            echo
+            echo "Sources applied:"
+            echo "- \`guideline/fabric_project\`"
+            echo "- \`guideline/fabric_project_data_eng\`"
+            echo "- \`.github/skills/*/SKILL.md\` selected by changed workload"
+            echo
+          } > /tmp/review.md
+
+          if [ "$validator_exit" -ne 0 ]; then
+            finding_count="$(
+              grep -cE ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
+            )"
+            set +e
+            python /tmp/fix_fabric_notebook_violations.py \
+              --root "$GITHUB_WORKSPACE" \
+              > /tmp/agent-fix.log 2>&1
+            fixer_exit="$?"
+            set -e
+
+            if [ "$fixer_exit" -ne 0 ]; then
+              {
+                echo "**Decision: REQUEST CHANGES**"
+                echo
+                echo "Found ${finding_count} Fabric guideline violations:"
+                echo
+                echo '```text'
+                grep -E ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
+                echo '```'
+                echo
+                echo "The agent could not produce a safe automatic patch:"
+                echo
+                echo '```text'
+                cat /tmp/agent-fix.log
+                echo '```'
+              } >> /tmp/review.md
+
+              gh pr comment "$pr_number" --body-file /tmp/review.md
+              gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/statuses/${reviewed_sha}" \
+                -f state=failure \
+                -f context=validate-review-context \
+                -f description="${finding_count} violations require manual fixes" \
+                -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              exit 1
+            fi
+
+            if ! python /tmp/validate_fabric_notebooks.py \
+              --root "$GITHUB_WORKSPACE" > /tmp/proposal-validation.log 2>&1; then
+              cat /tmp/proposal-validation.log
+              echo "The proposed patch does not resolve all findings."
+              exit 1
+            fi
+
+            git diff --binary > "$GITHUB_WORKSPACE/agent-proposal.patch"
+            git reset --hard HEAD
+            {
+              echo "**Decision: REQUEST CHANGES**"
+              echo
+              echo "Found ${finding_count} Fabric guideline violations:"
+              echo
+              echo '```text'
+              grep -E ': error \[FAB[0-9]{3}\]' /tmp/agent-review.log || true
+              echo '```'
+              echo
+              echo "### Agent-proposed correction"
+              echo
+              cat /tmp/agent-fix.log
+              echo
+              echo "The proposed patch resolves all findings in validation."
+              echo "Approve the **fabric-agent-change-approval** deployment to commit it."
+            } >> /tmp/review.md
+
+            gh pr comment "$pr_number" --body-file /tmp/review.md
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/statuses/${reviewed_sha}" \
+              -f state=pending \
+              -f context=validate-review-context \
+              -f description="Agent fix proposal awaiting approval" \
+              -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+            echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+            echo "reviewed_sha=$reviewed_sha" >> "$GITHUB_OUTPUT"
+            echo "proposal_created=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "**Decision: APPROVE PROPOSAL**"
+            echo
+            echo "No Fabric guideline violations were found."
+            echo
+            echo "### Proposed change"
+            echo
+            echo "Synchronize \`${SOURCE_BRANCH}\` with current \`${TARGET_BRANCH}\`,"
+            echo "rerun validation on the resulting commit, and publish that commit"
+            echo "for final approval."
+            echo
+            echo "Approve the **fabric-agent-change-approval** deployment to apply this proposal."
+          } >> /tmp/review.md
+
+          gh pr comment "$pr_number" --body-file /tmp/review.md
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${reviewed_sha}" \
+            -f state=pending \
+            -f context=validate-review-context \
+            -f description="Agent proposal awaiting approval" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "reviewed_sha=$reviewed_sha" >> "$GITHUB_OUTPUT"
+          echo "proposal_created=false" >> "$GITHUB_OUTPUT"
+
+      - name: Store agent proposal
+        if: steps.review.outputs.proposal_created == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabric-agent-proposal-${{ github.run_id }}
+          path: agent-proposal.patch
+          if-no-files-found: error
+          retention-days: 1
+
+  apply-approved-proposal:
+    name: Apply approved proposal
+    needs: agent-review
+    runs-on: ubuntu-latest
+    environment: fabric-agent-change-approval
+    outputs:
+      applied_sha: ${{ steps.apply.outputs.applied_sha }}
+
+    steps:
+      - name: Checkout proposed branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_branch }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download approved agent proposal
+        if: needs.agent-review.outputs.proposal_created == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: fabric-agent-proposal-${{ github.run_id }}
+          path: ${{ runner.temp }}/fabric-agent-proposal
+
+      - name: Apply proposal and validate committed code
+        id: apply
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.agent-review.outputs.pr_number }}
+          REVIEWED_SHA: ${{ needs.agent-review.outputs.reviewed_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_sha="$(git rev-parse HEAD)"
+          if [ "$current_sha" != "$REVIEWED_SHA" ]; then
+            gh pr comment "$PR_NUMBER" \
+              --body "The source branch changed after agent review. Restart the pipeline so the new commit can be reviewed."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$TARGET_BRANCH"
+
+          before_merge="$(git rev-parse HEAD)"
+          if ! git merge --no-edit "origin/${TARGET_BRANCH}"; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            git merge --abort
+            gh pr comment "$PR_NUMBER" \
+              --body "The approved proposal could not be applied because these files conflict with ${TARGET_BRANCH}: ${conflicts}"
+            exit 1
+          fi
+
+          if [ "${{ needs.agent-review.outputs.proposal_created }}" = "true" ]; then
+            git apply "$RUNNER_TEMP/fabric-agent-proposal/agent-proposal.patch"
+            git add --all
+            git commit -m "Apply approved Fabric agent fixes"
+          fi
+
+          python .github/scripts/validate_fabric_notebooks.py
+          git diff --check "origin/${TARGET_BRANCH}...HEAD" -- \
+            '.github/**' \
+            ':(glob)**/*.Notebook/notebook-content.py'
+
+          applied_sha="$(git rev-parse HEAD)"
+          if [ "$applied_sha" != "$before_merge" ]; then
+            git push origin "HEAD:${SOURCE_BRANCH}"
+          fi
+
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${applied_sha}" \
+            -f state=success \
+            -f context=validate-review-context \
+            -f description="Approved agent proposal applied and validated" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          gh pr comment "$PR_NUMBER" \
+            --body "## Fabric Agent Change Applied
+
+          The approved proposal is committed at \`${applied_sha}\`.
+
+          - Fabric guideline validation: **Pass**
+          - Merge conflict check: **Pass**
+          - Remaining \`FAB###\` findings: **0**
+
+          Approve the **fabric-final-approval** deployment to authorize the final merge."
+
+          echo "applied_sha=$applied_sha" >> "$GITHUB_OUTPUT"
+
+  final-approval-and-merge:
+    name: Final approval and merge
+    needs:
+      - agent-review
+      - apply-approved-proposal
+    runs-on: ubuntu-latest
+    environment: fabric-final-approval
+
+    steps:
+      - name: Verify approval target and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.agent-review.outputs.pr_number }}
+          APPLIED_SHA: ${{ needs.apply-approved-proposal.outputs.applied_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_sha="$(
+            gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid'
+          )"
+          if [ "$current_sha" != "$APPLIED_SHA" ]; then
+            gh pr comment "$PR_NUMBER" \
+              --body "The pull request changed after the approved proposal was applied. Restart the pipeline for a new review."
+            exit 1
+          fi
+
+          validation_state="$(
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${APPLIED_SHA}/status" \
+              --jq '.statuses[] | select(.context == "validate-review-context") | .state' \
+              | head -n 1
+          )"
+          if [ "$validation_state" != "success" ]; then
+            echo "The approved commit does not have a successful Fabric validation status."
+            exit 1
+          fi
+
+          gh pr review "$PR_NUMBER" \
+            --approve \
+            --body "Final environment approval received. The reviewed and validated agent proposal is approved for merge."
+          gh pr merge "$PR_NUMBER" --merge
+
+          {
+            echo "## Fabric agent pipeline complete"
+            echo
+            echo "PR #${PR_NUMBER} was reviewed, approved at both gates, and merged."
+            echo "Merged commit: \`${APPLIED_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

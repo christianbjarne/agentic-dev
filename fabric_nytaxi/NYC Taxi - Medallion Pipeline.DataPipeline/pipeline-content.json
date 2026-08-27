@@ -1,0 +1,63 @@
+{
+  "properties": {
+    "description": "Sequential Bronze to Silver to Gold processing for 2025 NYC TLC data",
+    "activities": [
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "cde25668-31e2-89e5-4c7c-1014d0e954c8",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
+        "policy": {
+          "timeout": "0.06:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60
+        },
+        "name": "Bronze Ingestion",
+        "dependsOn": []
+      },
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "a46fb408-13ab-9d63-4f32-f39fa3033078",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
+        "policy": {
+          "timeout": "0.06:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60
+        },
+        "name": "Silver Dimensional",
+        "dependsOn": [
+          {
+            "activity": "Bronze Ingestion",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "b5e95961-de6d-a8ef-4750-e1b90eecdd7d",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
+        },
+        "policy": {
+          "timeout": "0.06:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60
+        },
+        "name": "Gold Reporting",
+        "dependsOn": [
+          {
+            "activity": "Silver Dimensional",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

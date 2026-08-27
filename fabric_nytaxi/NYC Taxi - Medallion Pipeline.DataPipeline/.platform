@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "NYC Taxi - Medallion Pipeline",
+    "description": "Orchestrates the NYC Taxi medallion notebooks"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "4f1bebca-2c14-ae35-4d22-bb44ceb7a9a8"
+  }
+}
