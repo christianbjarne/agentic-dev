@@ -1,0 +1,47 @@
+workload:
+  name: sales_analytics
+  domain: sales
+  owner: data_eng
+  description: Metadata for sales analytics workload across bronze, silver, and gold.
+
+lakehouses:
+  bronze: LH_Bronze
+  silver: LH_Silver
+  gold: LH_Gold
+
+paths:
+  bronze:
+    source_files: Files/inbound/sales_orders
+    output_files: Files/raw/sales_orders
+  silver:
+    source_shortcut: Files/shortcuts/bronze/sales_orders
+  gold:
+    source_shortcut: Tables/tbl_sales_orders
+
+tables:
+  silver:
+    orders: tbl_sales_orders
+  gold:
+    fact_sales: tbl_sales_fact_sales
+    dim_customer: tbl_sales_dim_customer
+    dim_product: tbl_sales_dim_product
+
+quality:
+  deduplicate_keys:
+    - order_id
+    - line_id
+  required_columns:
+    - order_id
+    - order_ts
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
+
+partitioning:
+  silver:
+    enabled: true
+    columns:
+      - order_date
+  gold:
+    enabled: false

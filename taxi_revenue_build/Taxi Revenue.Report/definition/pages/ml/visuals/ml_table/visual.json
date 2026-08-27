@@ -1,0 +1,162 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.4.0/schema.json",
+  "name": "ml_table",
+  "position": {
+    "x": 48,
+    "y": 466,
+    "z": 50,
+    "width": 736,
+    "height": 222
+  },
+  "visual": {
+    "visualType": "pivotTable",
+    "query": {
+      "queryState": {
+        "Rows": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "cluster_label"
+                }
+              },
+              "queryRef": "ml_zone_clusters.cluster_label",
+              "nativeQueryRef": "cluster_label"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "borough"
+                }
+              },
+              "queryRef": "ml_zone_clusters.borough",
+              "nativeQueryRef": "borough"
+            }
+          ]
+        },
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "ML Zone Count"
+                }
+              },
+              "queryRef": "ml_zone_clusters.ML Zone Count",
+              "nativeQueryRef": "ML Zone Count"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "ML Segment Revenue"
+                }
+              },
+              "queryRef": "ml_zone_clusters.ML Segment Revenue",
+              "nativeQueryRef": "ML Segment Revenue"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "ML Segment Trips"
+                }
+              },
+              "queryRef": "ml_zone_clusters.ML Segment Trips",
+              "nativeQueryRef": "ML Segment Trips"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "ML Avg Tip %"
+                }
+              },
+              "queryRef": "ml_zone_clusters.ML Avg Tip %",
+              "nativeQueryRef": "ML Avg Tip %"
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "columnHeaders": [
+        {
+          "properties": {
+            "autoSizeColumnWidth": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "columnAdjustment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'growToFit'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Segment Breakdown by Borough'"
+                }
+              }
+            },
+            "heading": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Heading3'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

@@ -1,0 +1,70 @@
+table ml_zone_clusters
+
+	measure 'ML Zone Count' = COUNTROWS(ml_zone_clusters)
+		formatString: #,0
+
+	measure 'ML Segment Revenue' = SUM(ml_zone_clusters[total_revenue])
+		formatString: \$#,0
+
+	measure 'ML Segment Trips' = SUM(ml_zone_clusters[total_trips])
+		formatString: #,0
+
+	measure 'ML Avg Tip %' = AVERAGE(ml_zone_clusters[avg_tip_pct])
+		formatString: 0.0%
+
+	column location_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: location_id
+
+	column zone
+		dataType: string
+		summarizeBy: none
+		sourceColumn: zone
+
+	column borough
+		dataType: string
+		summarizeBy: none
+		sourceColumn: borough
+
+	column total_revenue
+		dataType: double
+		summarizeBy: sum
+		sourceColumn: total_revenue
+
+	column total_trips
+		dataType: int64
+		summarizeBy: sum
+		sourceColumn: total_trips
+
+	column avg_fare
+		dataType: double
+		summarizeBy: average
+		sourceColumn: avg_fare
+
+	column avg_distance
+		dataType: double
+		summarizeBy: average
+		sourceColumn: avg_distance
+
+	column avg_tip_pct
+		dataType: double
+		summarizeBy: average
+		sourceColumn: avg_tip_pct
+
+	column cluster_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: cluster_id
+
+	column cluster_label
+		dataType: string
+		summarizeBy: none
+		sourceColumn: cluster_label
+
+	partition ml_zone_clusters = entity
+		mode: directLake
+		source
+			entityName: ml_zone_clusters
+			schemaName: silver
+			expressionSource: DirectLake

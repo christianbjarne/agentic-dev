@@ -1,0 +1,57 @@
+table ml_fare_metrics
+
+	measure 'Fare R2' = MAX(ml_fare_metrics[r2])
+		formatString: 0.0%
+
+	measure 'Fare RMSE' = MAX(ml_fare_metrics[rmse])
+		formatString: \$#,0.00
+
+	measure 'Fare MAE' = MAX(ml_fare_metrics[mae])
+		formatString: \$#,0.00
+
+	column r2
+		dataType: double
+		summarizeBy: none
+		sourceColumn: r2
+
+	column rmse
+		dataType: double
+		summarizeBy: none
+		sourceColumn: rmse
+
+	column mae
+		dataType: double
+		summarizeBy: none
+		sourceColumn: mae
+
+	column n_train
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: n_train
+
+	column n_test
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: n_test
+
+	column avg_actual
+		dataType: double
+		summarizeBy: none
+		sourceColumn: avg_actual
+
+	column avg_predicted
+		dataType: double
+		summarizeBy: none
+		sourceColumn: avg_predicted
+
+	column intercept
+		dataType: double
+		summarizeBy: none
+		sourceColumn: intercept
+
+	partition ml_fare_metrics = entity
+		mode: directLake
+		source
+			entityName: ml_fare_metrics
+			schemaName: silver
+			expressionSource: DirectLake

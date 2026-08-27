@@ -1,0 +1,179 @@
+- **/notebooks** → Processing notebooks per layer  
+- **/guideline** → Standards, policies, naming conventions, templates  
+- **/data** → Data storage (Files / Tables)  
+
+---
+
+## Data Flow
+1. Ingestion → Bronze  
+2. Standardization → Silver  
+3. Modeling → Gold  
+
+Data moves strictly via **shortcuts (no duplication)**.
+
+---
+
+## Layer Responsibilities
+
+### Bronze (Raw Data)
+
+**Purpose**
+- Store raw data as-is  
+
+**Input**
+- Data is pushed to:
+  - `Files` section  
+
+**Characteristics**
+- No transformations  
+- Append-only  
+- Schema-less or minimal schema  
+
+**Notebook**
+- Exactly **one notebook**  
+- Handles ingestion only  
+
+---
+
+### Silver (Standardization)
+
+**Purpose**
+- Clean and standardize data  
+- Enforce schema  
+
+**Input**
+- Shortcut from Bronze  
+
+**Processing**
+- Schema validation  
+- Type casting  
+- Deduplication  
+- Null handling  
+- Use the data quality framework in data_quality folder (fabric-agentic-dev\metadata_driven_framework\data_quality) with files called gex_demo. ge_demo_utils notebook keep as is and add to worksapce once. 
+Use gex_demo_nb as how you should build the silver notebook for validating before ingesting into silver. Create log tables in not created like in the notebook
+
+**Storage**
+- Must use **Delta tables**  
+
+**Notebook**
+- Exactly **one notebook**  
+- Handles all transformations from Bronze → Silver  
+
+---
+
+### Gold (Modeling)
+
+**Purpose**
+- Serve analytics / BI  
+
+**Input**
+- Shortcut from Silver  
+
+**Processing**
+- Star schema design  
+  - Fact tables  
+  - Dimension tables  
+- Business logic and aggregations  
+
+**Storage**
+- Must use **Delta tables**  
+
+**Notebook**
+- Exactly **one notebook**  
+- Builds curated model  
+
+---
+
+## Notebooks Standard
+
+- **One notebook per layer (mandatory)**  
+- Located under `/notebooks`  
+- Follow structure defined in `/guideline`  
+
+### Required Notebook Structure
+1. Configuration (paths, parameters)  
+2. Read data (via ingestion or shortcuts)  
+3. Transformations  
+4. Write output  
+5. Basic validation / logging  
+
+---
+
+## Shortcuts
+
+Shortcuts are required between all layers:
+
+- Bronze → Silver  
+- Silver → Gold  
+
+### Rules
+- No data copying  
+- Always reference upstream data via shortcuts  
+- Maintain clear lineage  
+
+---
+
+## Data Storage Standards
+
+- Bronze → Files only  
+- Silver → **Delta tables only**  
+- Gold → **Delta tables only**  
+
+### Additional Rules
+- Use **managed tables** unless explicitly required otherwise  
+- Use consistent naming conventions:
+  - `tbl_<domain>_<entity>`  
+- Partition only when needed for performance  
+- V order when writing to gold layer
+
+---
+
+## Guideline Folder (/guideline)
+
+The `/guideline` folder defines all standards and must be followed.
+
+### Contents
+- Naming conventions  
+- Notebook template  
+- Data contracts / schema definitions  
+- Transformation standards  
+- Logging and validation rules  
+
+---
+
+## Key Design Principles
+
+- Bronze = **source of truth**  
+- Silver = **data quality + schema enforcement**  
+- Gold = **business logic + analytics model**  
+
+- Use **shortcuts over copies**  
+- Keep **strict layer separation**  
+- Keep solution **simple and maintainable**  
+- Prefer **deterministic transformations**  
+
+---
+
+## Do / Don’t
+
+### Do
+- Use one notebook per layer  
+- Use Delta format in Silver and Gold  
+- Validate schema in Silver  
+- Build star schema in Gold  
+- Follow `/guideline` standards  
+
+### Don’t
+- Don’t transform data in Bronze  
+- Don’t duplicate data between layers  
+- Don’t create multiple notebooks per layer  
+- Don’t mix responsibilities across layers  
+
+---
+
+## Expected Outcome
+
+- Clear data lineage across layers  
+- Consistent and governed transformations  
+- Scalable architecture  
+- Optimized model for Power BI and analytics  

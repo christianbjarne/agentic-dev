@@ -1,0 +1,26 @@
+table ml_fare_coef
+
+	measure 'Fare Coefficient' = SUM(ml_fare_coef[coefficient])
+		formatString: 0.00
+
+	column feature
+		dataType: string
+		summarizeBy: none
+		sourceColumn: feature
+
+	column coefficient
+		dataType: double
+		summarizeBy: sum
+		sourceColumn: coefficient
+
+	column abs_coefficient
+		dataType: double
+		summarizeBy: sum
+		sourceColumn: abs_coefficient
+
+	partition ml_fare_coef = entity
+		mode: directLake
+		source
+			entityName: ml_fare_coef
+			schemaName: silver
+			expressionSource: DirectLake

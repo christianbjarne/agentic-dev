@@ -1,0 +1,26 @@
+# Fabric End-to-End Project – Agent Instructions
+
+## Overview 
+This solution follows a **medallion architecture** across multiple Lakehouses in the same Fabric workspace:
+
+- **Bronze**
+- **Silver**
+- **Gold**
+
+Each layer is isolated in its own Lakehouse and connected using **shortcuts**.
+
+---
+
+## Workspace & Lakehouse Structure
+
+All Lakehouses are deployed in the **same Fabric workspace**:
+
+- `LH_Bronze`
+- `LH_Silver`
+- `LH_Gold`
+
+---
+
+## Folder Structure
+
+Each Lakehouse follows a consistent structure:

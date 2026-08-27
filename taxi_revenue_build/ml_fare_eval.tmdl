@@ -1,0 +1,50 @@
+table ml_fare_eval
+
+	measure 'Fare Avg Actual' = AVERAGE(ml_fare_eval[avg_actual])
+		formatString: \$#,0.00
+
+	measure 'Fare Avg Predicted' = AVERAGE(ml_fare_eval[avg_predicted])
+		formatString: \$#,0.00
+
+	measure 'Fare Pred Trips' = SUM(ml_fare_eval[n_trips])
+		formatString: #,0
+
+	measure 'Fare MAE by Bucket' = AVERAGE(ml_fare_eval[avg_abs_error])
+		formatString: \$#,0.00
+
+	column distance_bucket
+		dataType: string
+		summarizeBy: none
+		sourceColumn: distance_bucket
+
+	column avg_actual
+		dataType: double
+		summarizeBy: average
+		sourceColumn: avg_actual
+
+	column avg_predicted
+		dataType: double
+		summarizeBy: average
+		sourceColumn: avg_predicted
+
+	column avg_distance
+		dataType: double
+		summarizeBy: average
+		sourceColumn: avg_distance
+
+	column n_trips
+		dataType: int64
+		summarizeBy: sum
+		sourceColumn: n_trips
+
+	column avg_abs_error
+		dataType: double
+		summarizeBy: average
+		sourceColumn: avg_abs_error
+
+	partition ml_fare_eval = entity
+		mode: directLake
+		source
+			entityName: ml_fare_eval
+			schemaName: silver
+			expressionSource: DirectLake
