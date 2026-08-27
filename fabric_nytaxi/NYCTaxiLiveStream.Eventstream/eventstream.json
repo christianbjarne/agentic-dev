@@ -1,7 +1,7 @@
 {
   "sources": [
     {
-      "id": "b82b45f2-b187-40ff-a5b9-b8af8447f298",
+      "id": "eac1f368-6203-4915-9d15-67536bab1dbd",
       "name": "TaxiSample",
       "type": "SampleData",
       "properties": {
@@ -11,7 +11,7 @@
   ],
   "destinations": [
     {
-      "id": "0139eac9-3723-468f-a136-836b94e03dcd",
+      "id": "3e30a167-37d5-4262-bf8e-45abff8723b2",
       "name": "TaxiEventhouse",
       "type": "Eventhouse",
       "properties": {
@@ -34,7 +34,7 @@
       ]
     },
     {
-      "id": "b4de0391-70ab-41d8-b4b8-651868ce3f2d",
+      "id": "8e4ef4ed-1679-467e-b61b-020317194fd2",
       "name": "TaxiActivator",
       "type": "Activator",
       "properties": {
