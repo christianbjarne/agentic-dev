@@ -1,0 +1,291 @@
+/// Gold monthly aggregate by service type, aligned with the SQL Endpoint reporting view.
+table 'Monthly Trip Summary'
+	lineageTag: 7f0a86cd-9c0c-4aec-be29-326fa5625e15
+
+	/// Total number of cleaned TLC trips across the selected months and service types.
+	measure 'Total Trips' = SUM('Monthly Trip Summary'[Trip Count])
+		formatString: #,##0
+		displayFolder: Core Metrics
+		lineageTag: 786219db-bd07-4955-8109-d6d30fbe0d6e
+
+	/// Trips from service types that publish fare metrics; standard FHV trips are excluded.
+	measure 'Paid Trips' = SUM('Monthly Trip Summary'[Paid Trip Count])
+		formatString: #,##0
+		displayFolder: Core Metrics
+		lineageTag: 6147a611-90ac-40b8-9691-28c021c3785d
+
+	/// Recorded passenger count; null source values were standardized to zero.
+	measure 'Total Passengers' = SUM('Monthly Trip Summary'[Passenger Count])
+		formatString: #,##0
+		displayFolder: Core Metrics
+		lineageTag: ec505359-2747-4f5b-9832-9643b7b155aa
+
+	/// Total recorded trip distance in miles.
+	measure 'Total Trip Distance' = SUM('Monthly Trip Summary'[Trip Distance])
+		formatString: #,##0.00
+		displayFolder: Core Metrics
+		lineageTag: 5d3b2637-8a61-44d0-aed1-08863a000e2b
+
+	/// Total cleaned trip duration in minutes.
+	measure 'Total Trip Duration Minutes' = SUM('Monthly Trip Summary'[Trip Duration Minutes])
+		formatString: #,##0.00
+		displayFolder: Core Metrics
+		lineageTag: 8b5aad4e-ac36-487f-b062-52b12f48abeb
+
+	/// Total cleaned trip duration expressed in hours.
+	measure 'Total Trip Duration Hours' = DIVIDE([Total Trip Duration Minutes], 60)
+		formatString: #,##0.00
+		displayFolder: Core Metrics
+		lineageTag: 5b35fb6b-5bbe-485e-aa30-8070ea7344f1
+
+	/// Published base fare revenue for yellow, green, and high-volume FHV trips.
+	measure 'Fare Revenue' = SUM('Monthly Trip Summary'[Fare Amount])
+		formatString: $#,##0.00
+		displayFolder: Financial Metrics
+		lineageTag: 9cbe2525-1d61-477d-a236-6e9802ce6e47
+
+	/// Recorded tips; taxi cash tips are not included in TLC source data.
+	measure Tips = SUM('Monthly Trip Summary'[Tip Amount])
+		formatString: $#,##0.00
+		displayFolder: Financial Metrics
+		lineageTag: 327a2ff3-2001-4737-88e8-048a18040e2c
+
+	/// Total recorded toll charges.
+	measure Tolls = SUM('Monthly Trip Summary'[Tolls Amount])
+		formatString: $#,##0.00
+		displayFolder: Financial Metrics
+		lineageTag: b41ae113-2d7f-4cba-8990-86b3bec122b6
+
+	/// Total published passenger charges after standardizing the source trip families.
+	measure 'Total Revenue' = SUM('Monthly Trip Summary'[Total Amount])
+		formatString: $#,##0.00
+		displayFolder: Financial Metrics
+		lineageTag: 0f1a7302-4589-4a2d-a5fc-2aa9b24f9240
+
+	/// Total legacy congestion surcharge amount.
+	measure 'Congestion Surcharges' = SUM('Monthly Trip Summary'[Congestion Surcharge Amount])
+		formatString: $#,##0.00
+		displayFolder: Financial Metrics
+		lineageTag: 9d916fe3-6232-40e3-ae09-e6472148b8ab
+
+	/// Total airport fee amount.
+	measure 'Airport Fees' = SUM('Monthly Trip Summary'[Airport Fee Amount])
+		formatString: $#,##0.00
+		displayFolder: Financial Metrics
+		lineageTag: 01ce804c-9674-4caa-a640-b63c5b754b24
+
+	/// Total Central Business District congestion fees introduced in 2025.
+	measure 'CBD Congestion Fees' = SUM('Monthly Trip Summary'[CBD Congestion Fee Amount])
+		formatString: $#,##0.00
+		displayFolder: Financial Metrics
+		lineageTag: 60387907-dbd4-4a41-96fb-3542f85504dd
+
+	/// Trips where a shared ride was requested.
+	measure 'Shared Requests' = SUM('Monthly Trip Summary'[Shared Request Count])
+		formatString: #,##0
+		displayFolder: Mobility Metrics
+		lineageTag: c3016913-a81e-406c-88a3-3a438f890348
+
+	/// Shared-ride requests that were matched.
+	measure 'Shared Matches' = SUM('Monthly Trip Summary'[Shared Match Count])
+		formatString: #,##0
+		displayFolder: Mobility Metrics
+		lineageTag: 47eeeee1-e701-4646-a9b9-09d1837a4f9e
+
+	/// Wheelchair-accessible vehicle requests.
+	measure 'WAV Requests' = SUM('Monthly Trip Summary'[WAV Request Count])
+		formatString: #,##0
+		displayFolder: Accessibility Metrics
+		lineageTag: a7bad15d-51c9-4133-a7c0-d6ccd5cfd4dd
+
+	/// Wheelchair-accessible vehicle requests that were matched.
+	measure 'WAV Matches' = SUM('Monthly Trip Summary'[WAV Match Count])
+		formatString: #,##0
+		displayFolder: Accessibility Metrics
+		lineageTag: 17a42890-0672-4953-8454-e3aea40ee5be
+
+	/// Average recorded trip distance in miles.
+	measure 'Average Trip Distance' = DIVIDE([Total Trip Distance], [Total Trips])
+		formatString: #,##0.00
+		displayFolder: Average Metrics
+		lineageTag: a87be171-cfc7-4273-a015-094e6f1b11c1
+
+	/// Average cleaned trip duration in minutes.
+	measure 'Average Trip Duration Minutes' = DIVIDE([Total Trip Duration Minutes], [Total Trips])
+		formatString: #,##0.00
+		displayFolder: Average Metrics
+		lineageTag: 261492a6-bf5c-462f-a808-19bd9e9d5aa6
+
+	/// Average published base fare across trip families with fare data.
+	measure 'Average Fare per Paid Trip' = DIVIDE([Fare Revenue], [Paid Trips])
+		formatString: $#,##0.00
+		displayFolder: Average Metrics
+		lineageTag: 9f09167a-48ed-4c7f-968c-6e9e3ddc3071
+
+	/// Average recorded tip across trip families with fare data.
+	measure 'Average Tip per Paid Trip' = DIVIDE([Tips], [Paid Trips])
+		formatString: $#,##0.00
+		displayFolder: Average Metrics
+		lineageTag: 30c3a5ba-015d-4555-b756-8708a7281bf0
+
+	/// Recorded tips divided by published base fare revenue.
+	measure 'Tip Rate' = DIVIDE([Tips], [Fare Revenue])
+		formatString: 0.00%
+		displayFolder: Rate Metrics
+		lineageTag: 8d7a90b4-7d66-4206-a0ae-db5c27ceb2eb
+
+	/// Share of shared-ride requests that were matched.
+	measure 'Shared Match Rate' = DIVIDE([Shared Matches], [Shared Requests])
+		formatString: 0.00%
+		displayFolder: Rate Metrics
+		lineageTag: f4879521-6bdb-427a-ac36-89052ce4851f
+
+	/// Share of wheelchair-accessible vehicle requests that were matched.
+	measure 'WAV Fulfillment Rate' = DIVIDE([WAV Matches], [WAV Requests])
+		formatString: 0.00%
+		displayFolder: Rate Metrics
+		lineageTag: 9a5a10a6-8999-4f5b-8fc1-7dc621744116
+
+	/// Percentage change in total trips from the prior month.
+	measure 'Month over Month Trip Growth' =
+			VAR _currentTrips = [Total Trips]
+			VAR _previousTrips = CALCULATE([Total Trips], DATEADD('Date'[Date], -1, MONTH))
+			RETURN
+			    DIVIDE(_currentTrips - _previousTrips, _previousTrips)
+		formatString: 0.00%
+		displayFolder: Trend Metrics
+		lineageTag: a1527835-396f-4f95-983e-015d210d4cd1
+
+	/// Percentage change in total passenger charges from the prior month.
+	measure 'Month over Month Revenue Growth' =
+			VAR _currentRevenue = [Total Revenue]
+			VAR _previousRevenue = CALCULATE([Total Revenue], DATEADD('Date'[Date], -1, MONTH))
+			RETURN
+			    DIVIDE(_currentRevenue - _previousRevenue, _previousRevenue)
+		formatString: 0.00%
+		displayFolder: Trend Metrics
+		lineageTag: cc44cb4d-28d5-415f-a356-c9735afe5d73
+
+	column 'Month Date Key'
+		dataType: int64
+		isHidden
+		lineageTag: f39660d0-00e1-468e-afdc-0b68771b4547
+		summarizeBy: none
+		sourceColumn: month_date_key
+
+	column 'Month Start'
+		dataType: dateTime
+		isHidden
+		lineageTag: 3dfc55a0-9014-48cf-9f5b-362ec90abc16
+		sourceColumn: month_start
+
+	column 'Service Type Key'
+		dataType: int64
+		isHidden
+		lineageTag: 400f57aa-7973-4964-9802-eb8e16cd90a0
+		summarizeBy: none
+		sourceColumn: service_type_key
+
+	column 'Trip Count'
+		dataType: int64
+		isHidden
+		lineageTag: 0e3ce05a-99b7-461d-8d65-c759fa68621f
+		sourceColumn: trip_count
+
+	column 'Paid Trip Count'
+		dataType: int64
+		isHidden
+		lineageTag: 32b80133-5562-4675-bbc0-ba7f53435573
+		sourceColumn: paid_trip_count
+
+	column 'Passenger Count'
+		dataType: int64
+		isHidden
+		lineageTag: 89f0fb92-7b4c-454b-bc4b-00a0dd8a1ea4
+		sourceColumn: passenger_count
+
+	column 'Trip Distance'
+		dataType: decimal
+		isHidden
+		lineageTag: 4fe8661f-11c0-4516-9c86-3a3b6956030e
+		sourceColumn: trip_distance
+
+	column 'Trip Duration Minutes'
+		dataType: decimal
+		isHidden
+		lineageTag: 6c05f772-c99b-41cf-a815-f05413b85cf1
+		sourceColumn: trip_duration_minutes
+
+	column 'Fare Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: e606394d-f67e-4349-bd51-876fbfecb886
+		sourceColumn: fare_amount
+
+	column 'Tip Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: ef432638-1593-44a4-ad2c-66a81143f140
+		sourceColumn: tip_amount
+
+	column 'Tolls Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 840a49c4-c5b5-403f-ab6f-f435346f82ad
+		sourceColumn: tolls_amount
+
+	column 'Total Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: c458f63e-37cd-4d05-a784-e44ad624d38c
+		sourceColumn: total_amount
+
+	column 'Congestion Surcharge Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 3d691e32-6e78-4e63-bc6f-cad4f1060810
+		sourceColumn: congestion_surcharge_amount
+
+	column 'Airport Fee Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 69d6b679-04b6-4ac2-a3b1-1311c4a5574e
+		sourceColumn: airport_fee_amount
+
+	column 'CBD Congestion Fee Amount'
+		dataType: decimal
+		isHidden
+		lineageTag: 0947a13c-8abc-45a1-b0dc-38dd47184f50
+		sourceColumn: cbd_congestion_fee_amount
+
+	column 'Shared Request Count'
+		dataType: int64
+		isHidden
+		lineageTag: ec3016bb-51aa-4758-9566-7f00a467495d
+		sourceColumn: shared_request_count
+
+	column 'Shared Match Count'
+		dataType: int64
+		isHidden
+		lineageTag: 70d49cc7-3f0b-4258-9c70-0bd57d61324c
+		sourceColumn: shared_match_count
+
+	column 'WAV Request Count'
+		dataType: int64
+		isHidden
+		lineageTag: 73c8ba37-5be7-4d89-9f69-0816ad03e71a
+		sourceColumn: wav_request_count
+
+	column 'WAV Match Count'
+		dataType: int64
+		isHidden
+		lineageTag: fbbd2d82-0e5b-42d3-b036-3e029a48a31c
+		sourceColumn: wav_match_count
+
+	partition 'Monthly Trip Summary' = entity
+		mode: directLake
+		source
+			entityName: monthly_trip_summary
+			schemaName: gold
+			expressionSource: 'DirectLake - NYC Taxi Analytics'
+

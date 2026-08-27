@@ -1,0 +1,39 @@
+/// Taxi zone where a trip began.
+table 'Pickup Zone'
+	lineageTag: 0c3c1aeb-beae-4250-a719-3686476b3e8c
+
+	column 'Location ID'
+		dataType: int64
+		isHidden
+		isKey
+		lineageTag: 7c969828-3812-47ae-b864-63a52249800b
+		summarizeBy: none
+		sourceColumn: location_id
+
+	/// NYC borough or special area containing the pickup zone.
+	column Borough
+		dataType: string
+		lineageTag: d4d697c4-30b6-46e6-97c0-29b6d201a420
+		summarizeBy: none
+		sourceColumn: borough
+
+	/// Official TLC taxi-zone name.
+	column Zone
+		dataType: string
+		lineageTag: 27761ab9-55ac-4354-a5bd-9569e7c8e5b3
+		summarizeBy: none
+		sourceColumn: zone_name
+
+	column 'Service Zone'
+		dataType: string
+		lineageTag: 4b79ee86-e5d7-4877-938f-fb837bddf8e7
+		summarizeBy: none
+		sourceColumn: service_zone
+
+	partition 'Pickup Zone' = entity
+		mode: directLake
+		source
+			entityName: dim_taxi_zone
+			schemaName: silver
+			expressionSource: 'DirectLake - NYC Taxi Analytics'
+

@@ -1,0 +1,25 @@
+/// Payment method recorded for yellow and green taxi trips.
+table 'Payment Type'
+	lineageTag: 124d6a80-6428-4004-98b1-a7630c0b7c94
+
+	column 'Payment Type ID'
+		dataType: int64
+		isHidden
+		isKey
+		lineageTag: 4ff4bd0a-180b-4b4d-9afc-6e3b1a31a5ee
+		summarizeBy: none
+		sourceColumn: payment_type_id
+
+	column 'Payment Type'
+		dataType: string
+		lineageTag: 166f46f8-3a59-4e30-a737-746e6d5b5412
+		summarizeBy: none
+		sourceColumn: payment_type_name
+
+	partition 'Payment Type' = entity
+		mode: directLake
+		source
+			entityName: dim_payment_type
+			schemaName: silver
+			expressionSource: 'DirectLake - NYC Taxi Analytics'
+
