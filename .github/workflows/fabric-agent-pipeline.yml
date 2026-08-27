@@ -241,6 +241,7 @@ jobs:
         id: apply
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ needs.agent-review.outputs.pr_number }}
           REVIEWED_SHA: ${{ needs.agent-review.outputs.reviewed_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
@@ -317,6 +318,7 @@ jobs:
       - name: Verify approval target and merge
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ needs.agent-review.outputs.pr_number }}
           APPLIED_SHA: ${{ needs.apply-approved-proposal.outputs.applied_sha }}
         shell: bash
