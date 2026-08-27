@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "agent_violation_33067950445"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "373b38dd-59bf-4492-ab43-c43d8dda1898"
+  }
+}
