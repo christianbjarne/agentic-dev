@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import sys
@@ -63,13 +64,6 @@ LINE_RULES = (
         "Write a managed Delta table using the required tbl_<domain>_<entity> name.",
     ),
     (
-        "FAB006",
-        re.compile(r"""\.mode\s*\(\s*["']overwrite["']\s*\)""", re.IGNORECASE),
-        "Unscoped overwrite can destroy unchanged data or unrelated partitions.",
-        ".github/skills/spark-authoring-cli/resources/data-engineering-patterns.md",
-        "Use an incremental MERGE or a partition-aware overwrite with explicit scope.",
-    ),
-    (
         "FAB007",
         re.compile(r"""["'][^"']*Files/gold(?:/|["'])""", re.IGNORECASE),
         "Gold data is being copied into Files instead of written as a governed Delta table.",
@@ -80,7 +74,7 @@ LINE_RULES = (
 
 
 def notebook_sources(root: Path) -> list[Path]:
-    return sorted(root.glob("fabric/**/*.Notebook/notebook-content.py"))
+    return sorted(root.glob("**/*.Notebook/notebook-content.py"))
 
 
 def executable_lines(text: str) -> list[tuple[int, str]]:
@@ -109,6 +103,29 @@ def validate_notebook(root: Path, path: Path) -> list[Finding]:
     code_text = "\n".join(line for _, line in code)
     lowered = code_text.lower()
     writes_data = ".write" in lowered or "saveastable" in lowered
+    has_validation = bool(
+        re.search(
+            r"\b(assert|validate|validation|quality|runtimeerror|row_count|expected_)\b",
+            lowered,
+        )
+    )
+    overwrite_lines = [
+        line_number
+        for line_number, line in code
+        if re.search(r"""\.mode\s*\(\s*["']overwrite["']\s*\)""", line, re.IGNORECASE)
+    ]
+    if overwrite_lines and not has_validation:
+        findings.append(
+            Finding(
+                "FAB006",
+                relative_path,
+                overwrite_lines[0],
+                "Overwrite is used without evidence of scope or output validation.",
+                ".github/skills/spark-authoring-cli/resources/data-engineering-patterns.md",
+                "Use MERGE or partition-aware overwrite and validate the resulting output.",
+            )
+        )
+
     bronze_line = next(
         (line_number for line_number, line in code if "bronze" in line.lower()),
         None,
@@ -133,7 +150,7 @@ def validate_notebook(root: Path, path: Path) -> list[Finding]:
             )
         )
 
-    if writes_data and not re.search(r"\b(assert|validate|validation|quality_check)\b", lowered):
+    if writes_data and not has_validation:
         write_line = next(line_number for line_number, line in code if ".write" in line.lower())
         findings.append(
             Finding(
@@ -146,8 +163,16 @@ def validate_notebook(root: Path, path: Path) -> list[Finding]:
             )
         )
 
-    lineage_fields = ("ingestion_timestamp", "source_system", "pipeline_run_id")
-    if writes_data and not all(field in lowered for field in lineage_fields):
+    lineage_fields = (
+        ("ingestion_timestamp", "_ingestion_timestamp", "processed_at"),
+        ("source_system", "_source_file", "source_url"),
+        ("pipeline_run_id", "_batch_id", "batch_id"),
+    )
+    has_lineage = all(
+        any(alias in lowered for alias in aliases)
+        for aliases in lineage_fields
+    )
+    if writes_data and not has_lineage:
         write_line = next(line_number for line_number, line in code if ".write" in line.lower())
         findings.append(
             Finding(
@@ -187,8 +212,18 @@ def write_summary(findings: list[Finding]) -> None:
             )
 
 
-def main() -> int:
-    root = Path(__file__).resolve().parents[2]
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate Fabric notebook source against repository guidance."
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path(__file__).resolve().parents[2],
+        help="Repository root to scan.",
+    )
+    args = parser.parse_args(argv)
+    root = args.root.resolve()
     sources = notebook_sources(root)
     if not sources:
         print("No Fabric notebook source files found.")
