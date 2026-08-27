@@ -159,6 +159,15 @@ monthly_summary = (
     )
 )
 
+context = notebookutils.runtime.context
+pipeline_run_id = str(context.get("activityId") or context["currentNotebookId"])
+monthly_summary = (
+    monthly_summary
+    .withColumn("ingestion_timestamp", F.current_timestamp())
+    .withColumn("source_system", F.lit("nyc_taxi_03_gold_reporting"))
+    .withColumn("pipeline_run_id", F.lit(pipeline_run_id))
+)
+
 (
     monthly_summary.write.format("delta")
     .mode("overwrite")
