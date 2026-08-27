@@ -11,6 +11,7 @@
 
 # CELL ********************
 
+# This notebook intentionally remains noncompliant for PR validation testing.
 workspace_id = "11111111-1111-1111-1111-111111111111"
 lakehouse_name = "LH_Bronze"
 source_path = (
