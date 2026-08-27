@@ -12,6 +12,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Validate Fabric review context
         shell: bash
         run: |
@@ -34,3 +39,6 @@ jobs:
           fi
 
           echo "Validated Fabric review instructions, guidelines, and $skill_count skill definitions."
+
+      - name: Validate Fabric notebooks against guidelines
+        run: python .github/scripts/validate_fabric_notebooks.py
