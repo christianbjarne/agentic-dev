@@ -1,0 +1,138 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.4.0/schema.json",
+  "name": "ml_scatter",
+  "position": {
+    "x": 800,
+    "y": 350,
+    "z": 50,
+    "width": 432,
+    "height": 338
+  },
+  "visual": {
+    "visualType": "scatterChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "zone"
+                }
+              },
+              "queryRef": "ml_zone_clusters.zone",
+              "nativeQueryRef": "zone"
+            }
+          ]
+        },
+        "Series": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "cluster_label"
+                }
+              },
+              "queryRef": "ml_zone_clusters.cluster_label",
+              "nativeQueryRef": "cluster_label"
+            }
+          ]
+        },
+        "X": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "avg_fare"
+                }
+              },
+              "queryRef": "ml_zone_clusters.avg_fare",
+              "nativeQueryRef": "avg_fare"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "avg_tip_pct"
+                }
+              },
+              "queryRef": "ml_zone_clusters.avg_tip_pct",
+              "nativeQueryRef": "avg_tip_pct"
+            }
+          ]
+        },
+        "Size": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "ml_zone_clusters"
+                    }
+                  },
+                  "Property": "ML Segment Revenue"
+                }
+              },
+              "queryRef": "ml_zone_clusters.ML Segment Revenue",
+              "nativeQueryRef": "ML Segment Revenue"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Segment Map: Avg Fare vs Tip % (bubble = revenue)'"
+                }
+              }
+            },
+            "heading": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Heading3'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}
