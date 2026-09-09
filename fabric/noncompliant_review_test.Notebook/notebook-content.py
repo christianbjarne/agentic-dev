@@ -35,7 +35,6 @@ from pyspark.sql import functions as F
 
 logger = logging.getLogger("customer_country_summary")
 customers = spark.table(source_table)
-preview_rows = customers.collect()
 
 required_columns = {"customer_id", "country"}
 missing_columns = required_columns.difference(customers.columns)
