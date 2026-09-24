@@ -1,0 +1,61 @@
+name: Copilot Fabric PR Review
+
+# Requests GitHub's official Copilot code-review agent. Copilot loads
+# .github/copilot-instructions.md, which requires it to evaluate the PR
+# against guideline/ and the matching .github/skills/*/SKILL.md files.
+#
+# pull_request_target is intentional: this workflow only calls the GitHub API
+# and never checks out or executes pull-request code. It therefore runs from
+# the trusted base branch and retains permission to request a review,
+# including for pull requests opened from forks.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: copilot-fabric-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  request-copilot-review:
+    name: Request Copilot code review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    steps:
+      - name: Request review from Copilot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          response="$(
+            gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/${{ github.repository }}/pulls/${PR_NUMBER}/requested_reviewers" \
+            -f "reviewers[]=copilot-pull-request-reviewer[bot]"
+          )"
+
+          if ! jq -e '
+            .requested_reviewers
+            | any(.login == "copilot-pull-request-reviewer[bot]")
+          ' <<<"$response" > /dev/null; then
+            echo "::error::GitHub did not accept Copilot as a reviewer. Enable Copilot code review for this repository or organization, then rerun this workflow."
+            exit 1
+          fi
+
+          echo "Requested GitHub Copilot review for PR #${PR_NUMBER}."
