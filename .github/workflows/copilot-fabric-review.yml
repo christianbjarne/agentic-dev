@@ -1,0 +1,37 @@
+name: Copilot Fabric PR Review
+
+# Requests a real GitHub Copilot code review on every non-draft pull request
+# (and re-review on new pushes). Copilot's review agent reads
+# .github/copilot-instructions.md automatically and can open guideline/ and
+# .github/skills/*/SKILL.md while it explores the repository, so this
+# workflow performs the AI-driven Fabric review described in that file --
+# unlike fabric-agent-pipeline.yml, which only runs static Python validators.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: copilot-fabric-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  request-copilot-review:
+    name: Request Copilot code review
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Request review from Copilot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/requested_reviewers" \
+            -f "reviewers[]=copilot-pull-request-reviewer[bot]"
