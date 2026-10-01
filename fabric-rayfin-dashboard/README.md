@@ -13,6 +13,8 @@ The original dashboard is untouched. Both versions call the same Foundry hosted 
 | SQLEndpoint | agent-command-center | `29d3e277-8753-41d2-b00c-a6a15857ace0` |
 | UserDataFunction (Rayfin functions) | agent-command-center | `7a029fc3-967e-44d9-bb12-36083a45e841` |
 | Notebook (job-panel demo) | nb_command_center_heartbeat | `44c03576-9ed9-401d-a2cb-558e2b152d41` |
+| Notebook (Project Osmos bridge) | nb_osmos_task_bridge | `b7f8e241-eb04-4200-88e6-2b8a0d6e2170` |
+| Lakehouse (app state: Osmos bridge status files) | lh_command_center | `c730a3d5-fa4b-45f4-a82e-4d3af927309d` |
 
 - **Open in Fabric:** <https://app.fabric.microsoft.com/groups/8b835744-f17d-44ef-b43a-3fe3d51c8e35/appbackends/e523a252-bf41-4a92-bd47-a4dac0a8f761?ctid=c37a5dca-2606-44ee-9cd7-78f8ebf834ec>
 - **Hosted app (Entra sign-in required):** <https://hazel-brook-637cf5ffd1-westus3.webapp.fabricapps.net>. Anonymous requests return HTTP 401.
@@ -29,9 +31,11 @@ flowchart LR
     fn["Rayfin Functions<br/>(UserDataFunction runtime)<br/>startRun · pollRun · getConversation<br/>getWorkspaceStatus · whoAmI<br/>createOsmosTask · getOsmosTask"]
     db[("Fabric SQL database<br/>Conversation · AgentRun<br/>RunEvent · RunOutput<br/>row-level security: owner_id")]
     items["Workspace items<br/>notebooks · pipelines · jobs"]
+    bridge["Notebook nb_osmos_task_bridge<br/>(runs as the signed-in owner)"]
+    lh[("Lakehouse lh_command_center<br/>Files/osmos/&lt;task&gt;.json")]
   end
   foundry["Azure AI Foundry<br/>fabric-orchestrator hosted agent<br/>+ 11 specialists"]
-  fabricapi["Fabric REST API<br/>/items · /jobs/instances · /git"]
+  fabricapi["Fabric REST API<br/>/workspaces · /items · /jobs/instances · /git"]
   osmos["Project Osmos<br/>(Lakehouse aichat API)"]
 
   user -->|HTTPS + Entra| ui
@@ -42,13 +46,17 @@ flowchart LR
   fn -->|"Responses API, background=true<br/>ctx.Tokens.AzureAI"| foundry
   fn -->|ctx.Tokens.Fabric| fabricapi
   fabricapi --- items
-  fn -->|MWC token| osmos
+  fn -->|"RunNotebook job<br/>(ctx.Tokens.Fabric)"| bridge
+  bridge -->|"notebookutils token → MWC token"| osmos
+  bridge -->|status JSON| lh
+  fn -->|"OneLake read<br/>ctx.Tokens.Storage"| lh
 ```
 
 ### How a chat run works
 
 1. **`startRun`**
    - Creates or reuses a `Conversation` row and an `AgentRun` row (status `working`).
+   - **Attaches Fabric workspace context** (app owner only). The Foundry agent identities can only reach the workspaces they have roles on. So when a prompt names a workspace (by name, id or URL), the app resolves it with the owner's Fabric token and adds the inventory to the prompt: items, plus the tables of any lakehouse in a pasted URL (capped at 12,000 characters). The agents then answer from it instead of failing with `403 InsufficientPrivileges`. The orchestrator feed entry says which workspaces were attached.
    - Calls the orchestrator's Responses endpoint with `background: true`, so the call doesn't hit the 240-second function timeout.
    - Chains follow-up prompts in a conversation through `previous_response_id`.
 2. **`pollRun`** (UI polls every few seconds)
@@ -57,6 +65,7 @@ flowchart LR
    - Splits the final answer into 3,900-character `RunOutput` chunks, which keeps each row under the Rayfin 4,000-character text limit.
    - Marks the run `completed` or `failed`.
    - Runs older than 20 minutes are failed as stale.
+   - Extracts the **Project Osmos handoff**. It prefers a structured `osmos_create_task` / handoff JSON. If none is present, it falls back to the delegation the orchestrator sent `osmos_data_engineer`: workspace id, the `LH_Osmos` lakehouse id, display name and composed instruction. The `osmos_data_engineer` agent returns `USER_ACTION_REQUIRED` with the handoff only as prose, because Osmos rejects agent identities.
 3. **The UI**
    - Shows the reply in the chat.
    - Drives the **agent graph**: each of the 12 agents is idle, working, completed or failed, based on the latest `RunEvent` rows.
@@ -76,7 +85,7 @@ Every row has `owner_id` = the caller's Entra object id, and Rayfin row-level se
 | Live feed of delegations | Agent writes to Table Storage via `report_agent_activity` | Derived from the Foundry response itself (delegation tool calls and outputs), so no extra agent write path is needed |
 | Fabric job tracking | `fabric_jobs` table written by the agent | Native Fabric REST: `/items` + `/jobs/instances` for the workspace, plus item counts |
 | Repository / PR panel | GitHub branch, changed files, PR, code review | Fabric **Git integration** status (provider, repo, branch, folder). GitHub PR review is not ported. |
-| Project Osmos | OBO sign-in card → create task → Git finalize | `createOsmosTask` / `getOsmosTask` through the Osmos aichat API. Only allowed when the caller is the app identity (see limitations). Git finalize is not ported. |
+| Project Osmos | OBO sign-in card → create task → Git finalize | Osmos card → **Create Osmos task**. The app runs the Fabric notebook `nb_osmos_task_bridge` as the signed-in owner. The notebook creates and monitors the task, and the card auto-refreshes its status from OneLake. Owner only (see limitations). Git finalize is not ported. |
 | Look and accessibility | Single page, fixed layout | Fluent-style tokens, light/dark theme, skip link, ARIA live regions, keyboard-reachable panels, responsive grid |
 
 ## Design decisions
@@ -102,7 +111,13 @@ Every row has `owner_id` = the caller's Entra object id, and Rayfin row-level se
    - No secrets, keys or connection strings are stored in code or in `rayfin.yml`, and `ctx.Secrets` is empty.
    - The publishable key (public by design) lives only in the git-ignored `rayfin/.deployments.json` and the generated `.env.local`.
 6. **Least privilege for workspace reads.** `getWorkspaceStatus` only reads its own workspace (`ALLOWED_WORKSPACES`), so the dashboard can't be used to browse other workspaces the app identity can reach.
-7. **Osmos guard.** Because function tokens are the app identity, not the caller (see limitations), `createOsmosTask` refuses to run unless the signed-in caller *is* the app identity. Otherwise any user could create Osmos tasks under someone else's name.
+7. **Osmos guard.** Because function tokens are the app identity, not the caller (see limitations), `createOsmosTask` refuses to run unless the signed-in caller *is* the app identity. Otherwise any user could create Osmos tasks under someone else's name. Workspace-context enrichment has the same guard.
+8. **Osmos through a notebook bridge.** Project Osmos's `generatemwctoken` returns **401** for the Rayfin function token. That token is a delegated user token (`aud` `https://api.fabric.microsoft.com`, scopes include `Item.ReadWrite.All`), but it's issued to the Rayfin client app (`7850f9b4-…`), which Osmos rejects. A notebook token from `notebookutils.credentials.getToken('pbi')` is accepted. So:
+   - `createOsmosTask` submits `nb_osmos_task_bridge` through the Jobs API. The job runs as the submitter, so the task is created as the signed-in user, which is native inside Fabric.
+   - The notebook creates the task, then polls its status every 30 s for up to 20 minutes. It writes `Files/osmos/<taskId>.json` in `lh_command_center`.
+   - `getOsmosTask` reads that file through OneLake with `ctx.Tokens.Storage`.
+
+   The task ID is assigned up front, so the "Open in Fabric" link works immediately. The notebook validates its inputs (GUIDs, an `abfss://` result path), uses no hardcoded workspace or lakehouse ids or OneLake endpoints, and passes the repo's `FAB001`–`FAB010` notebook checks.
 
 ## Rayfin preview limitations found (and workarounds)
 
@@ -117,6 +132,8 @@ Every row has `owner_id` = the caller's Entra object id, and Rayfin row-level se
 | Text columns max 4,000 characters; functions time out at 240 s | Long answers and long runs | Chunked `RunOutput`; Foundry `background: true` + polling |
 | Hosted sign-in in automation needs an interactive passkey | Headless browser tests can't sign in to the hosted URL | Verified with the same SDK + brokered Entra exchange (see Evidence) |
 | CLI 1.36.1 quirks | `rayfin dev` local functions host fails with `same key … AZURE_FUNCTIONS_ENVIRONMENT`; `rayfin … --help` can hang; npm 10 arborist bug | Run the frontend locally against the deployed functions (`RAYFIN_REMOTE_FUNCTIONS=1`); install with `npx -y npm@11 install` |
+| Project Osmos rejects the Rayfin function token (`generatemwctoken` → 401). The frontend only gets a brokered Rayfin session, never a raw Entra token. | Osmos tasks can't be created directly from a function | Notebook bridge `nb_osmos_task_bridge` (design decision 8) |
+| The Foundry agent identities only have roles on workspace `osmos-foundry-demo` | Asking about other workspaces made specialists fail with `403 InsufficientPrivileges` | The app attaches the owner's workspace inventory to the prompt. Alternative (not done automatically, since it's a security decision): grant the agent identities Viewer on the other workspaces. |
 
 ## Deploy and update
 
@@ -139,6 +156,9 @@ npm run validate:functions
 
 # Deploy or update everything (data schema, functions, static site)
 npx rayfin up --workspace-id 8b835744-f17d-44ef-b43a-3fe3d51c8e35 --json --yes
+
+# Supporting Fabric items (idempotent): lakehouse lh_command_center + notebook nb_osmos_task_bridge
+python scripts/deploy-fabric-items.py --workspace-id 8b835744-f17d-44ef-b43a-3fe3d51c8e35
 ```
 
 After you change a function signature, regenerate `packages/functions/src/types.ts`. Never edit it by hand:
@@ -163,6 +183,8 @@ The `rayfinLocalDev` Vite plugin signs you in through the brokered Entra exchang
 node scripts/smoke-deployed.mjs                 # whoAmI, workspace status, full chat run
 node scripts/smoke-deployed.mjs --skip-run      # identity + workspace/job status only
 node scripts/smoke-deployed.mjs --prompt "..."  # custom prompt
+node scripts/smoke-deployed.mjs --create-osmos --prompt "Use Project Osmos to ..."  # also creates the Osmos task
+node scripts/smoke-deployed.mjs --osmos-run <runKey>  # create/refresh the Osmos task for an existing run
 ```
 
 The script:
@@ -189,10 +211,18 @@ Browser UI test (local Vite frontend with `RAYFIN_REMOTE_FUNCTIONS=1`, so it use
 - The Fabric jobs panel showed `nb_command_center_heartbeat` · RunNotebook · Manual, going from `NotStarted` to **Completed (14 s)**. Job instance: `26497921-18d9-4734-bc34-ae4d82d6a98b`.
 - The hosted URL returns HTTP 401 to anonymous requests (assets are protected).
 
+Fix round ("chat not working, Osmos didn't work"):
+- **Chat about other workspaces.** Prompt: *"describe osmos-demo workspace"* (a workspace the agents have no role on). Before the fix, the answer said it needed the inventory or hit a 403. After the fix, run `60dd6f9a…` completed, and the answer lists workspace `645a6582-…` with lakehouse `osmos_demo_lakehouse`, its SQL endpoint, and notebooks `01_load_bronze`, `02_transform_silver` and `03_build_gold`, all with ids.
+- **Osmos handoff.** Prompt: *"Use Project Osmos to create a Bronze ingestion task in workspace osmos-foundry-demo …"*. Run `10558c9b…` completed with `osmos` set: workspace `d1eee5bb-…`, lakehouse `LH_Osmos` `4fac856c-…`, and the composed instruction. So the Osmos card is shown.
+- **Osmos task created as the user through the app.**
+  - `createOsmosTask` returned `ok`, task `922418fd-ffa5-4611-9228-fa0215a3a69c`, status `Submitting`.
+  - `getOsmosTask` then read `Running` from OneLake, as written by `nb_osmos_task_bridge` after it created the task and read it back from the Osmos API.
+  - An earlier direct notebook test (job `e50c6dd8-…`, task `e6e40d44-…`) completed the same way.
+
 ## Known gaps
 
-- **Per-user tokens for Foundry, Fabric and Osmos.** Rayfin functions don't currently offer OBO, so these calls run as the app identity. Revisit when Rayfin adds user-delegated function tokens.
-- **Project Osmos** create/read is implemented but was not run live in this deployment.
+- **Per-user tokens for Foundry and Fabric.** Rayfin functions don't currently offer OBO, so these calls run as the app identity. Osmos runs as the owner through the notebook bridge. Revisit when Rayfin adds user-delegated function tokens.
+- **Osmos bridge latency.** The notebook needs a Spark session (about 15–60 s on starter pools) before the task exists. It monitors for 20 minutes; after that, use "Open in Fabric".
 - **Osmos Git finalize** and the **GitHub PR / code-review panel** are not ported. The Repository panel shows Fabric Git integration status instead.
 - The orchestrator's own `report_agent_activity` tool still writes to the old dashboard's Table Storage. That is agent behavior and was intentionally left unchanged.
 
@@ -205,5 +235,6 @@ packages/
   functions/  Rayfin Functions: function_app.ts (handlers), foundry.ts, fabric.ts, http.ts
   frontend/   React + Vite UI: components/command-center/*, hooks/use-command-center.ts
 rayfin/       rayfin.yml (services, auth, hosting); .deployments.json is git-ignored
-scripts/      smoke-deployed.mjs, validate-functions.mjs and template tests
+fabric/       nb_osmos_task_bridge.Notebook (Fabric Git source format)
+scripts/      smoke-deployed.mjs, deploy-fabric-items.py, validate-functions.mjs and template tests
 ```

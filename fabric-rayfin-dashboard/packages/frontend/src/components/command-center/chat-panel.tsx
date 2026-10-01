@@ -169,6 +169,24 @@ function OsmosCard({ run, canCreate }: { run: RunView; canCreate: boolean }) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const osmos = run.osmos;
+  const running = Boolean(task?.taskId && task.running !== false && !['Completed', 'Failed', 'Cancelled'].includes(task.status ?? ''));
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const client = await getRayfinClient();
+          const result = await client.functions.getOsmosTask.invoke({ runKey: run.runKey });
+          if (result.ok) setTask(result);
+        } catch {
+          // The manual Refresh button reports errors; background polling stays quiet.
+        }
+      })();
+    }, 20_000);
+    return () => window.clearInterval(timer);
+  }, [running, run.runKey]);
+
   if (!osmos) return null;
 
   const act = async (kind: 'create' | 'refresh') => {
@@ -219,6 +237,11 @@ function OsmosCard({ run, canCreate }: { run: RunView; canCreate: boolean }) {
           <Button variant="secondary" disabled={working} onClick={() => void act('refresh')}>
             Refresh status
           </Button>
+          {task.message && (
+            <span role="status" className="w-full text-[length:var(--text-200)] text-muted-foreground">
+              {task.message}
+            </span>
+          )}
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-300">
@@ -228,7 +251,7 @@ function OsmosCard({ run, canCreate }: { run: RunView; canCreate: boolean }) {
           </Button>
           {!canCreate && (
             <span className="text-[length:var(--text-200)] text-muted-foreground">
-              Only the app owner can create Osmos tasks from this app (it runs with the app identity).
+              Only the app owner can create Osmos tasks from this app. The task is created as the owner through a Fabric notebook.
             </span>
           )}
         </div>

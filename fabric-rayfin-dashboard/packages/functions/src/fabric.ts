@@ -133,19 +133,108 @@ export async function workspaceStatus(token: string, workspaceId: string): Promi
   };
 }
 
+// --- Workspace context for prompts -----------------------------------------
+
+const GUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const MAX_CONTEXT_WORKSPACES = 3;
+const MAX_CONTEXT_ITEMS = 150;
+const MAX_CONTEXT_CHARS = 12_000;
+
+export interface PromptWorkspaceContext {
+  text: string;
+  workspaces: string[];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Workspaces the prompt names (by Fabric URL, id or display name). */
+function matchWorkspaces(prompt: string, all: Record<string, unknown>[]): Record<string, unknown>[] {
+  const lower = prompt.toLowerCase();
+  const ids = new Set<string>();
+  for (const match of lower.matchAll(new RegExp(`(?:groups|workspaces)/(${GUID})`, 'g'))) ids.add(match[1]);
+  for (const match of lower.matchAll(new RegExp(GUID, 'g'))) ids.add(match[0]);
+  const picked: Record<string, unknown>[] = [];
+  for (const workspace of all) {
+    if (ids.has(str(workspace.id, 64).toLowerCase())) picked.push(workspace);
+  }
+  const byName = all
+    .filter((workspace) => !picked.includes(workspace))
+    .map((workspace) => ({ workspace, name: str(workspace.displayName, 200).toLowerCase() }))
+    .filter(({ name }) => name.length >= 3 && name !== 'my workspace')
+    .sort((a, b) => b.name.length - a.name.length);
+  let remaining = lower;
+  for (const { workspace, name } of byName) {
+    const pattern = new RegExp(`(^|[^a-z0-9_-])${escapeRegExp(name)}($|[^a-z0-9_-])`);
+    if (pattern.test(remaining)) {
+      picked.push(workspace);
+      remaining = remaining.replace(pattern, '$1$2');
+    }
+  }
+  return picked.slice(0, MAX_CONTEXT_WORKSPACES);
+}
+
+/**
+ * Resolve the Fabric workspaces a prompt refers to and describe them, using
+ * the caller's own Fabric access. The hosted agents run with their own agent
+ * identities, which often cannot see the user's workspaces; this inventory
+ * lets them answer and compose Project Osmos handoffs anyway.
+ */
+export async function promptWorkspaceContext(token: string, prompt: string): Promise<PromptWorkspaceContext | undefined> {
+  let all: Record<string, unknown>[];
+  try {
+    all = await listAll(token, '/v1/workspaces', 1000);
+  } catch {
+    return undefined;
+  }
+  const matched = matchWorkspaces(prompt, all);
+  if (!matched.length) return undefined;
+  const lakehouseIds = new Set(
+    [...prompt.toLowerCase().matchAll(new RegExp(`lakehouses/(${GUID})`, 'g'))].map((match) => match[1]),
+  );
+  const blocks: string[] = [];
+  for (const workspace of matched) {
+    const workspaceId = str(workspace.id, 64);
+    const lines = [`Workspace "${str(workspace.displayName, 200)}" (id ${workspaceId})`];
+    let items: Record<string, unknown>[] = [];
+    try {
+      items = await listAll(token, `/v1/workspaces/${workspaceId}/items`, MAX_CONTEXT_ITEMS);
+    } catch (error) {
+      lines.push(`- Item listing failed: ${str((error as Error).message, 300)}`);
+    }
+    const counts = new Map<string, number>();
+    for (const item of items) counts.set(str(item.type, 64), (counts.get(str(item.type, 64)) ?? 0) + 1);
+    if (items.length) {
+      lines.push(`- ${items.length} item(s): ${[...counts.entries()].map(([type, count]) => `${count} ${type}`).join(', ')}`);
+      for (const item of items.slice(0, MAX_CONTEXT_ITEMS)) {
+        lines.push(`  - ${str(item.type, 64)} "${str(item.displayName, 200)}" id ${str(item.id, 64)}`);
+      }
+    } else if (!lines.some((line) => line.includes('failed'))) {
+      lines.push('- The workspace is empty.');
+    }
+    for (const item of items) {
+      const itemId = str(item.id, 64).toLowerCase();
+      if (str(item.type, 64) !== 'Lakehouse' || !lakehouseIds.has(itemId)) continue;
+      const tables = await fabricGet(token, `/v1/workspaces/${workspaceId}/lakehouses/${itemId}/tables?maxResults=100`);
+      if (tables.ok) {
+        const names = asArray(asRecord(tables.body).data)
+          .map(asRecord)
+          .map((table) => `${str(table.name, 200)} (${str(table.format, 20) || str(table.type, 20)})`);
+        lines.push(`- Tables in lakehouse "${str(item.displayName, 200)}": ${names.join(', ') || 'none listed'}`);
+      } else {
+        lines.push(`- Tables in lakehouse "${str(item.displayName, 200)}" could not be listed (schema-enabled lakehouses need the SQL endpoint).`);
+      }
+    }
+    blocks.push(lines.join('\n'));
+  }
+  let text = blocks.join('\n\n');
+  if (text.length > MAX_CONTEXT_CHARS) text = `${text.slice(0, MAX_CONTEXT_CHARS)}\n- (inventory truncated)`;
+  return { text, workspaces: matched.map((workspace) => str(workspace.displayName, 200)) };
+}
+
 // --- Project Osmos ---------------------------------------------------------
 
-const SKILL_HEADER = { 'x-ms-fabric-skill': 'project-osmos' };
-const TRUSTED_SUFFIXES = ['.fabric.microsoft.com', '.analysis.windows.net', '.pbidedicated.windows.net'];
-const STATUS_BY_CODE: Record<number, string> = {
-  0: 'Created',
-  1: 'Running',
-  2: 'Cancelling',
-  3: 'Cancelled',
-  4: 'Completed',
-  5: 'Failed',
-};
-const RUNNING = new Set(['Created', 'Running', 'Cancelling']);
 export const MAX_INSTRUCTION = 9500;
 
 export interface OsmosRequest {
@@ -155,15 +244,6 @@ export interface OsmosRequest {
   instruction: string;
 }
 
-function httpsBase(value: string): string {
-  const url = new URL(value.includes('://') ? value : `https://${value}`);
-  const host = url.hostname.toLowerCase();
-  if (url.protocol !== 'https:' || !TRUSTED_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
-    throw new Error('Fabric returned an untrusted routed host.');
-  }
-  return `https://${url.host}`;
-}
-
 export function osmosTaskPage(workspaceId: string, lakehouseId: string, taskId: string): string {
   return (
     `https://app.fabric.microsoft.com/groups/${workspaceId}/lakehouses/${lakehouseId}` +
@@ -171,126 +251,122 @@ export function osmosTaskPage(workspaceId: string, lakehouseId: string, taskId: 
   );
 }
 
-function normalizeStatus(value: unknown): string {
-  if (value === null || value === undefined || value === '') return 'Created';
-  if (typeof value === 'number') return STATUS_BY_CODE[value] ?? `Status ${value}`;
-  if (typeof value === 'string' && /^\d+$/.test(value)) return STATUS_BY_CODE[Number(value)] ?? `Status ${value}`;
-  return str(value, 32);
+// --- Project Osmos notebook bridge -------------------------------------------
+//
+// Project Osmos rejects the Rayfin function token (generatemwctoken returns 401
+// for the Rayfin client app). So the app runs a Fabric notebook as the signed-in
+// owner through the Jobs API. The notebook uses the Fabric-issued token, creates
+// and monitors the task, and writes status JSON to the app lakehouse.
+
+export const OSMOS_BRIDGE_NOTEBOOK = 'nb_osmos_task_bridge';
+export const APP_LAKEHOUSE = 'lh_command_center';
+const ONELAKE_DFS = 'https://onelake.dfs.fabric.microsoft.com';
+
+interface BridgeItems {
+  notebookId: string;
+  lakehouseId: string;
 }
 
-interface OsmosRoute {
-  tasksBase: string;
-  mwcToken: string;
-}
-
-async function osmosRoute(token: string, req: OsmosRequest): Promise<OsmosRoute> {
-  const workspace = await request(
-    'GET',
-    `${FABRIC_API}/v1/workspaces/${req.workspaceId}`,
-    bearer(token),
-    undefined,
-    SKILL_HEADER,
-  );
-  if (!workspace.ok) throw new Error(describeFailure('Osmos workspace lookup', workspace));
-  const capacityId = str(asRecord(workspace.body).capacityId, 64);
-  if (!capacityId) throw new Error('The Osmos workspace has no Fabric capacity.');
-  const lakehouse = await request(
-    'GET',
-    `${FABRIC_API}/v1/workspaces/${req.workspaceId}/lakehouses/${req.lakehouseId}`,
-    bearer(token),
-    undefined,
-    SKILL_HEADER,
-  );
-  if (!lakehouse.ok) throw new Error(describeFailure('Osmos lakehouse lookup', lakehouse));
-  const bases = [FABRIC_API];
-  const home = workspace.headers.get('home-cluster-uri');
-  if (home && httpsBase(home) !== FABRIC_API) bases.push(httpsBase(home));
-  const payload = {
-    capacityObjectId: capacityId,
-    workloadType: 'SparkCore',
-    workspaceObjectId: req.workspaceId,
-    artifactObjectIds: [req.lakehouseId],
-  };
-  let tokenData: Record<string, unknown> | undefined;
-  for (const [index, base] of bases.entries()) {
-    const result = await request('POST', `${base}/metadata/v201606/generatemwctoken`, bearer(token), payload, SKILL_HEADER);
-    if (result.ok) {
-      tokenData = asRecord(result.body);
-      break;
-    }
-    if (!str(result.body, 2000).includes('Tenant not authorized for cluster') || index + 1 >= bases.length) {
-      throw new Error(describeFailure('Project Osmos routing token', result));
-    }
+async function bridgeItems(token: string, appWorkspaceId: string): Promise<BridgeItems> {
+  const result = await request('GET', `${FABRIC_API}/v1/workspaces/${appWorkspaceId}/items`, bearer(token));
+  if (!result.ok) throw new Error(describeFailure('Listing the app workspace items', result));
+  const items = asArray(asRecord(result.body).value).map(asRecord);
+  const find = (type: string, name: string) =>
+    str(items.find((item) => item.type === type && item.displayName === name)?.id, 64);
+  const notebookId = find('Notebook', OSMOS_BRIDGE_NOTEBOOK);
+  const lakehouseId = find('Lakehouse', APP_LAKEHOUSE);
+  if (!notebookId || !lakehouseId) {
+    throw new Error(
+      `The Osmos bridge is not deployed: run scripts/deploy-fabric-items.py to create ${OSMOS_BRIDGE_NOTEBOOK} and ${APP_LAKEHOUSE}.`,
+    );
   }
-  const mwcToken = str(tokenData?.Token ?? tokenData?.token, 20_000);
-  const host = str(tokenData?.TargetUriHost ?? tokenData?.mwcTokenTargetUriHost, 400);
-  if (!mwcToken || !host) throw new Error('Fabric did not return a Project Osmos routing token.');
-  return {
-    tasksBase:
-      `${httpsBase(host)}/webapi/capacities/${capacityId}/workloads/SparkCore/SparkCoreService/direct/v1/` +
-      `workspaces/${req.workspaceId}/artifacts/${req.lakehouseId}/aichat`,
-    mwcToken,
-  };
+  return { notebookId, lakehouseId };
 }
 
-function osmosCall(route: OsmosRoute, method: string, path: string, body?: unknown): Promise<HttpResult> {
-  return request(method, `${route.tasksBase}${path}`, `mwctoken ${route.mwcToken}`, body, SKILL_HEADER);
+function bridgeFile(lakehouseId: string, taskId: string): string {
+  return `${lakehouseId}/Files/osmos/${taskId}.json`;
 }
 
-export async function createOsmosTask(token: string, req: OsmosRequest): Promise<OsmosTaskView> {
+/** Submit the bridge notebook (as the caller) to create the task. Returns the pre-assigned task ID. */
+export async function submitOsmosBridge(
+  token: string,
+  appWorkspaceId: string,
+  req: OsmosRequest,
+): Promise<OsmosTaskView> {
   if (!req.instruction.trim()) return { ok: false, message: 'The Osmos handoff has no instruction.' };
   if (req.instruction.length > MAX_INSTRUCTION) {
     return { ok: false, message: 'The composed instruction is too long for Project Osmos.' };
   }
-  const route = await osmosRoute(token, req);
+  const { notebookId, lakehouseId } = await bridgeItems(token, appWorkspaceId);
   const taskId = randomUUID();
-  const steps: [string, string, unknown][] = [
-    ['PUT', `/${taskId}`, { displayName: req.displayName, instruction: req.instruction }],
-    [
-      'POST',
-      `/${taskId}/messages`,
-      {
-        messages: [
-          {
-            id: randomUUID(),
-            role: 'User',
-            content: req.instruction,
-            timestamp: nowIso(),
-            metadata: { author_name: 'rayfin-command-center', author_source: 'fabric-rayfin-dashboard' },
-          },
-        ],
+  const parameters: Record<string, string> = {
+    mode: 'create',
+    task_id: taskId,
+    workspace_id: req.workspaceId,
+    lakehouse_id: req.lakehouseId,
+    display_name: req.displayName,
+    instruction_b64: Buffer.from(req.instruction, 'utf8').toString('base64'),
+    result_path: `abfss://${appWorkspaceId}@onelake.dfs.fabric.microsoft.com/${bridgeFile(lakehouseId, taskId)}`,
+    monitor_minutes: '20',
+  };
+  const result = await request(
+    'POST',
+    `${FABRIC_API}/v1/workspaces/${appWorkspaceId}/items/${notebookId}/jobs/instances?jobType=RunNotebook`,
+    bearer(token),
+    {
+      executionData: {
+        parameters: Object.fromEntries(Object.entries(parameters).map(([key, value]) => [key, { value, type: 'string' }])),
       },
-    ],
-    ['POST', `/${taskId}/run`, undefined],
-  ];
-  for (const [method, path, body] of steps) {
-    const result = await osmosCall(route, method, path, body);
-    if (!result.ok) {
-      return { ok: false, message: describeFailure(`Project Osmos ${method} ${path.split('/').pop() ?? ''}`, result) };
-    }
+    },
+  );
+  if (result.status !== 202 && !result.ok) {
+    return { ok: false, message: describeFailure('Starting the Osmos bridge notebook', result) };
   }
   return {
     ok: true,
     taskId,
-    status: 'Running',
+    status: 'Submitting',
     running: true,
     taskPage: osmosTaskPage(req.workspaceId, req.lakehouseId, taskId),
+    message: `Creating the task as you through the Fabric notebook ${OSMOS_BRIDGE_NOTEBOOK}.`,
   };
 }
 
-export async function readOsmosTask(token: string, req: OsmosRequest, taskId: string): Promise<OsmosTaskView> {
-  const route = await osmosRoute(token, req);
-  const result = await osmosCall(route, 'GET', `/${taskId}`);
-  if (!result.ok) return { ok: false, taskId, message: describeFailure('Project Osmos task read', result) };
-  const task = asRecord(result.body);
-  const status = normalizeStatus(task.status);
-  const error = str(asRecord(task.runDetails).errorMessage, 500);
+/** Read the status the bridge notebook last wrote. Undefined until the notebook has started. */
+export async function readOsmosBridge(
+  fabricToken: string,
+  storageToken: string,
+  appWorkspaceId: string,
+  req: OsmosRequest,
+  taskId: string,
+): Promise<OsmosTaskView | undefined> {
+  const { lakehouseId } = await bridgeItems(fabricToken, appWorkspaceId);
+  const result = await request(
+    'GET',
+    `${ONELAKE_DFS}/${appWorkspaceId}/${bridgeFile(lakehouseId, taskId)}`,
+    bearer(storageToken),
+    undefined,
+    { 'x-ms-version': '2023-11-03' },
+  );
+  if (result.status === 404) return undefined;
+  if (!result.ok) throw new Error(describeFailure('Reading the Osmos bridge status', result));
+  const state = asRecord(typeof result.body === 'string' ? safeJson(result.body) : result.body);
+  if (str(state.taskId, 64) !== taskId) throw new Error('The Osmos bridge status does not match this task.');
+  const status = str(state.status, 32) || 'Submitting';
   return {
     ok: true,
     taskId,
     status,
-    running: RUNNING.has(status),
+    running: state.running === true,
     taskPage: osmosTaskPage(req.workspaceId, req.lakehouseId, taskId),
-    message: error || undefined,
+    message: str(state.message, 1000) || undefined,
   };
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return {};
+  }
 }

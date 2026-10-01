@@ -8,7 +8,9 @@
  * request then runs through the deployed AppBackend: Rayfin DB with RLS and the
  * deployed Functions. Tokens are never printed.
  *
- * Usage:  node scripts/smoke-deployed.mjs [--prompt "..."] [--skip-run]
+ * Usage:  node scripts/smoke-deployed.mjs [--prompt "..."] [--skip-run] [--create-osmos]
+ *         --create-osmos submits the run's Project Osmos handoff (creates a real task).
+ *         --osmos-run <runKey> retries the Osmos submission for an existing run.
  */
 import { readFileSync } from 'node:fs';
 import { RayfinClient } from '@microsoft/rayfin-client';
@@ -67,6 +69,17 @@ log('workspace', {
   git: status.git,
 });
 
+const osmosRun = option('--osmos-run');
+if (osmosRun) {
+  const created = await time('createOsmosTask', () => client.functions.createOsmosTask.invoke({ runKey: osmosRun }));
+  log('osmos task', created);
+  if (created.ok) {
+    await new Promise((resolve) => setTimeout(resolve, 15000));
+    log('osmos status', await time('getOsmosTask', () => client.functions.getOsmosTask.invoke({ runKey: osmosRun })));
+  }
+  process.exit(0);
+}
+
 if (!flag('--skip-run')) {
   const prompt =
     option('--prompt') ??
@@ -89,6 +102,14 @@ if (!flag('--skip-run')) {
     response: run.response?.slice(0, 1500),
     osmos: run.osmos,
   });
+  if (flag('--create-osmos') && run.osmos) {
+    const created = await time('createOsmosTask', () => client.functions.createOsmosTask.invoke({ runKey: run.runKey }));
+    log('osmos task', created);
+    if (created.ok) {
+      await new Promise((resolve) => setTimeout(resolve, 15000));
+      log('osmos status', await time('getOsmosTask', () => client.functions.getOsmosTask.invoke({ runKey: run.runKey })));
+    }
+  }
   const history = await time('getConversation (persisted)', () =>
     client.functions.getConversation.invoke({ conversationId: conversation.id }),
   );

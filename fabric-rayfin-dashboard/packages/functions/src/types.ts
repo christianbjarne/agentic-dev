@@ -35,7 +35,7 @@ export type AppFunctionsSchema = {
   };
   whoAmI: {
     input: Record<string, never>;
-    output: { caller: { subject: string; name?: undefined | string; email?: undefined | string }; appIdentity?: undefined | { upn?: undefined | string; type?: undefined | string }; callerIsAppIdentity: boolean; allowedWorkspaces: string[] };
+    output: { caller: { subject: string; name?: undefined | string; email?: undefined | string }; appIdentity?: undefined | { upn?: undefined | string; type?: undefined | string; audience?: undefined | string; appId?: undefined | string; scopes?: undefined | string }; callerIsAppIdentity: boolean; allowedWorkspaces: string[] };
   };
   createOsmosTask: {
     input: { runKey: string };

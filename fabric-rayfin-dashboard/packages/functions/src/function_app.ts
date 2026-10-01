@@ -19,10 +19,12 @@ import type {
 } from '@rayfin-app/shared';
 import { randomUUID } from 'node:crypto';
 import {
-  createOsmosTask as submitOsmosTask,
-  readOsmosTask,
+  promptWorkspaceContext,
+  readOsmosBridge,
+  submitOsmosBridge,
   workspaceStatus,
   type OsmosRequest,
+  type PromptWorkspaceContext,
 } from './fabric.js';
 import { envelope, getResponse, startResponse, type ParsedResponse } from './foundry.js';
 import { claimString, HEX_KEY_PATTERN, jwtClaims, str, toIso, UUID_PATTERN } from './http.js';
@@ -35,6 +37,8 @@ const udf = new UserDataFunctions();
  * to browse other workspaces the app owner can reach.
  */
 const ALLOWED_WORKSPACES = ['8b835744-f17d-44ef-b43a-3fe3d51c8e35'];
+/** The workspace hosting this app, its lakehouse and the Osmos bridge notebook. */
+const APP_WORKSPACE_ID = ALLOWED_WORKSPACES[0];
 const MAX_PROMPT = 4000;
 const OUTPUT_CHUNK = 3900;
 const STALE_RUN_MS = 20 * 60 * 1000;
@@ -270,7 +274,11 @@ async function finishRun(data: Data, owner: string, run: AgentRunRecord, parsed:
 /** Send a prompt to the Foundry fabric-orchestrator as a background response. */
 udf.func(
   'startRun',
-  async (prompt: string, conversationId: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI>): Promise<Wire<RunView>> => {
+  async (
+    prompt: string,
+    conversationId: string,
+    ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,
+  ): Promise<Wire<RunView>> => {
     const owner = callerSubject(ctx);
     const text = (prompt ?? '').trim();
     if (!text) throw new Error('Enter a prompt.');
@@ -314,9 +322,18 @@ udf.func(
       owner_id: owner,
     });
 
+    // Only the app owner gets workspace context: the Fabric token is the app
+    // identity, so other callers must not be able to read the owner's workspaces.
+    let workspaceContext: PromptWorkspaceContext | undefined;
+    try {
+      if (callerIsAppIdentity(ctx)) workspaceContext = await promptWorkspaceContext(ctx.Tokens.Fabric, text);
+    } catch {
+      workspaceContext = undefined;
+    }
+
     const started = await startResponse(
       ctx.Tokens.AzureAI,
-      envelope(runKey, text),
+      envelope(runKey, text, workspaceContext?.text),
       conversation.previousResponseId,
       conversation.agentSessionId,
     );
@@ -333,7 +350,11 @@ udf.func(
         agent: ORCHESTRATOR,
         status: 'working',
         task: str(text, 1000),
-        summary: started.reset ? 'Started a new orchestrator session (the previous one expired).' : 'Planning the request.',
+        summary: started.reset
+          ? 'Started a new orchestrator session (the previous one expired).'
+          : workspaceContext
+            ? `Planning the request with Fabric context for: ${workspaceContext.workspaces.join(', ')}.`
+            : 'Planning the request.',
         createdAt: now,
         updatedAt: now,
         owner_id: owner,
@@ -448,7 +469,14 @@ udf.func(
     let same = false;
     try {
       const identity = appIdentity(ctx);
-      app = { upn: identity.upn, type: identity.type };
+      const tokenClaims = jwtClaims(ctx.Tokens.Fabric);
+      app = {
+        upn: identity.upn,
+        type: identity.type,
+        audience: claimString(tokenClaims, 'aud') || undefined,
+        appId: claimString(tokenClaims, 'appid', 'azp') || undefined,
+        scopes: claimString(tokenClaims, 'scp').slice(0, 1000) || undefined,
+      };
       same = callerIsAppIdentity(ctx);
     } catch {
       app = undefined;
@@ -489,17 +517,22 @@ udf.func(
     const owner = callerSubject(ctx);
     const { data, run, request } = await osmosContext(ctx, runKey);
     if (run.osmosTaskId) return { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Running' };
-    const result = await submitOsmosTask(ctx.Tokens.Fabric, request);
+    let result: OsmosTaskView;
+    try {
+      result = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, request);
+    } catch (error) {
+      return { ok: false, message: str((error as Error).message, 1000) || 'Project Osmos did not accept the request.' };
+    }
     if (result.ok && result.taskId) {
       const now = new Date();
-      await data.AgentRun.update({ id: run.id }, { osmosTaskId: result.taskId, osmosStatus: 'Running', updatedAt: now });
+      await data.AgentRun.update({ id: run.id }, { osmosTaskId: result.taskId, osmosStatus: result.status ?? 'Submitting', updatedAt: now });
       await data.RunEvent.create({
         runKey: run.runKey,
         eventKey: `${run.runKey}:osmos:${result.taskId}`,
         agent: 'osmos_data_engineer',
         status: 'working',
         task: str(`Project Osmos task: ${request.displayName}`, 1000),
-        summary: `Task ${result.taskId} created. ${result.taskPage ?? ''}`,
+        summary: `Task ${result.taskId} submitted as you via the Fabric notebook bridge. ${result.taskPage ?? ''}`,
         createdAt: now,
         updatedAt: now,
         owner_id: owner,
@@ -513,10 +546,24 @@ udf.func(
 /** Refresh the status of this run's Project Osmos task. */
 udf.func(
   'getOsmosTask',
-  async (runKey: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<OsmosTaskView>> => {
+  async (
+    runKey: string,
+    ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric | AudienceType.Storage>,
+  ): Promise<Wire<OsmosTaskView>> => {
     const { data, run, request } = await osmosContext(ctx, runKey);
     if (!run.osmosTaskId) return { ok: false, message: 'No Project Osmos task has been created for this run.' };
-    const result = await readOsmosTask(ctx.Tokens.Fabric, request, run.osmosTaskId);
+    let result: OsmosTaskView;
+    try {
+      result = (await readOsmosBridge(ctx.Tokens.Fabric, ctx.Tokens.Storage, APP_WORKSPACE_ID, request, run.osmosTaskId)) ?? {
+        ok: true,
+        taskId: run.osmosTaskId,
+        status: run.osmosStatus ?? 'Submitting',
+        running: true,
+        message: 'Waiting for the Fabric notebook bridge to start (usually under a minute).',
+      };
+    } catch (error) {
+      return { ok: false, taskId: run.osmosTaskId, message: str((error as Error).message, 1000) };
+    }
     if (result.ok && result.status && result.status !== run.osmosStatus) {
       await data.AgentRun.update({ id: run.id }, { osmosStatus: result.status, updatedAt: new Date() });
       const event = await data.RunEvent.findFirst({ eventKey: { eq: `${run.runKey}:osmos:${run.osmosTaskId}` } });

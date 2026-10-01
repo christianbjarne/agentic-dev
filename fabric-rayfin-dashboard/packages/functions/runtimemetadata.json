@@ -22,7 +22,7 @@
         },
         {
           "name": "ctx",
-          "type": "RayfinContext<UniversalAppSchema, AudienceType.AzureAI>",
+          "type": "RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>",
           "optional": false,
           "hasDefault": false,
           "position": 2,
@@ -30,7 +30,8 @@
         }
       ],
       "contextAudiences": [
-        "AzureAI"
+        "AzureAI",
+        "Fabric"
       ]
     },
     {
@@ -156,7 +157,7 @@
         },
         {
           "name": "ctx",
-          "type": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+          "type": "RayfinContext<UniversalAppSchema, AudienceType.Fabric | AudienceType.Storage>",
           "optional": false,
           "hasDefault": false,
           "position": 1,
@@ -164,7 +165,8 @@
         }
       ],
       "contextAudiences": [
-        "Fabric"
+        "Fabric",
+        "Storage"
       ]
     }
   ]

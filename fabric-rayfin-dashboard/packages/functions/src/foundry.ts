@@ -62,13 +62,28 @@ export interface ParsedResponse {
   };
 }
 
-/** The prompt envelope the original bridge used, so agent behavior is unchanged. */
-export function envelope(runKey: string, prompt: string): string {
+/**
+ * The prompt envelope the original bridge used, so agent behavior is unchanged.
+ * `workspaceContext` is an optional inventory the command center resolved with
+ * the signed-in user's Fabric access.
+ */
+export function envelope(runKey: string, prompt: string, workspaceContext?: string): string {
+  const context = workspaceContext
+    ? '\n\nFabric workspace context resolved by the command center with the signed-in ' +
+      "user's own Fabric access (the specialists' agent identities may not have access " +
+      'to these workspaces; use this inventory instead of failing, and do not retry ' +
+      'calls that return 403). For Project Osmos work, compose the task with these ' +
+      'workspace and lakehouse IDs; if the agent identity cannot submit it, return ' +
+      'USER_ACTION_REQUIRED with the handoff and the command center will create the ' +
+      'task as the signed-in user.\n' +
+      workspaceContext
+    : '';
   return (
     `Dashboard run ID: ${runKey}.\n` +
     'This is an interactive command-center request. Record every actual specialist ' +
-    'delegation with report_agent_activity as instructed.\n\n' +
-    `User request:\n${prompt}`
+    'delegation with report_agent_activity as instructed.' +
+    context +
+    `\n\nUser request:\n${prompt}`
   );
 }
 
@@ -195,8 +210,68 @@ export function parseResponse(data: Record<string, unknown>): ParsedResponse {
       str(error.message, 1500) ||
       (status === 'incomplete' ? `Response incomplete: ${str(incomplete.reason, 200)}` : undefined),
     delegations,
-    handoff: findHandoff(handoffSources),
+    handoff: findHandoff(handoffSources) ?? osmosHandoffFromDelegations(delegations, results, output),
   };
+}
+
+const GUID_IN_TEXT = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+const MAX_HANDOFF_INSTRUCTION = 3500;
+
+function firstGuid(texts: string[], patterns: RegExp[]): string | undefined {
+  for (const pattern of patterns) {
+    for (const text of texts) {
+      const match = pattern.exec(text);
+      if (match?.[1]) return match[1].toLowerCase();
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The osmos_data_engineer reports USER_ACTION_REQUIRED in prose (its structured
+ * handoff goes to the old dashboard's activity store), so rebuild the handoff
+ * from the specialist's reply and the task the orchestrator delegated.
+ */
+function osmosHandoffFromDelegations(
+  delegations: Delegation[],
+  results: Map<string, string>,
+  output: Record<string, unknown>[],
+): ParsedResponse['handoff'] {
+  for (const delegation of delegations) {
+    if (delegation.agent !== 'osmos_data_engineer') continue;
+    const result = results.get(delegation.callId) ?? '';
+    if (!/USER_ACTION_REQUIRED|signed-in user|needs your sign-in|sign in and create/i.test(result)) continue;
+    const call = output.find((item) => item.type === 'function_call' && item.call_id === delegation.callId);
+    let task = delegation.task;
+    try {
+      task = str(asRecord(JSON.parse(str(call?.arguments, 50_000)) as unknown).task, 20_000) || task;
+    } catch {
+      // Keep the truncated task.
+    }
+    const sources = [result, task];
+    const workspaceId = firstGuid(sources, [
+      new RegExp(`workspace[ _-]?id\\W{0,6}(${GUID_IN_TEXT})`, 'i'),
+      new RegExp(`/groups/(${GUID_IN_TEXT})`, 'i'),
+    ]);
+    const lakehouseId = firstGuid(sources, [
+      new RegExp(`default (?:spark-session )?lakehouse(?: id)?[\\s\\S]{0,80}?(${GUID_IN_TEXT})`, 'i'),
+      new RegExp(`LH_Osmos\\W{0,6}(?:id\\W{0,4})?(${GUID_IN_TEXT})`, 'i'),
+      new RegExp(`/lakehouses/(${GUID_IN_TEXT})`, 'i'),
+    ]);
+    if (!workspaceId || !lakehouseId) continue;
+    const displayName =
+      /display name\W{0,6}`([^`\n]{1,200})`/i.exec(result)?.[1] ??
+      /display name\W{0,6}"([^"\n]{1,200})"/i.exec(result)?.[1] ??
+      'Project Osmos task';
+    const instruction = task
+      .replace(/^\s*EXECUTE NOW:[^.]*\.\s*/i, '')
+      .replace(/\s*If the task cannot start[\s\S]*$/i, '')
+      .trim()
+      .slice(0, MAX_HANDOFF_INSTRUCTION);
+    if (!instruction) continue;
+    return { workspaceId, lakehouseId, displayName: displayName.trim(), instruction };
+  }
+  return undefined;
 }
 
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
