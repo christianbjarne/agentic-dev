@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import {
   promptWorkspaceContext,
   readOsmosBridge,
+  resolveOsmosLakehouse,
   submitOsmosBridge,
   workspaceStatus,
   type OsmosRequest,
@@ -378,7 +379,10 @@ udf.func(
 /** Poll one run: record specialist delegations and, when done, the answer. */
 udf.func(
   'pollRun',
-  async (runKey: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI>): Promise<Wire<RunView>> => {
+  async (
+    runKey: string,
+    ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,
+  ): Promise<Wire<RunView>> => {
     const owner = callerSubject(ctx);
     const data = ctx.getDataClient();
     const run = await findRun(data, runKey);
@@ -398,6 +402,13 @@ udf.func(
       return { ...view, error };
     }
     await recordProgress(data, owner, run, parsed);
+    if (TERMINAL.includes(parsed.status) && parsed.handoff) {
+      try {
+        parsed.handoff = await resolveOsmosLakehouse(ctx.Tokens.Fabric, parsed.handoff);
+      } catch {
+        // createOsmosTask resolves again and reports a missing LH_Osmos to the user.
+      }
+    }
     const latest = TERMINAL.includes(parsed.status) ? await finishRun(data, owner, run, parsed) : run;
     return buildView(data, latest);
   },
@@ -454,9 +465,20 @@ function appIdentity(ctx: Ctx<AudienceType.Fabric>): { upn?: string; oid?: strin
 function callerIsAppIdentity(ctx: Ctx<AudienceType.Fabric>): boolean {
   const caller = jwtClaims(ctx.accessToken);
   const app = appIdentity(ctx);
-  const email = claimString(caller, 'email', 'upn', 'preferred_username').toLowerCase();
-  const oid = (claimString(caller, 'oid') || callerSubject(ctx)).toLowerCase();
-  return Boolean((app.upn && email === app.upn.toLowerCase()) || (app.oid && oid === app.oid.toLowerCase()));
+  const appOid = (app.oid ?? '').toLowerCase();
+  const appUpn = (app.upn ?? '').toLowerCase();
+  // Rayfin session tokens vary in shape (oid claim, bare oid sub, or a path ending in /users/<oid>),
+  // so compare every object id and sign-in name the caller token carries.
+  const ids = new Set<string>();
+  for (const value of [claimString(caller, 'oid'), callerSubject(ctx), claimString(caller, 'sub')]) {
+    for (const match of value.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi)) {
+      ids.add(match[0].toLowerCase());
+    }
+  }
+  const names = ['email', 'upn', 'preferred_username', 'unique_name']
+    .map((claim) => claimString(caller, claim).toLowerCase())
+    .filter(Boolean);
+  return Boolean((appOid && ids.has(appOid)) || (appUpn && names.includes(appUpn)));
 }
 
 /** Who is signed in, and which identity the app uses for Fabric and Foundry. */
@@ -472,6 +494,7 @@ udf.func(
       const tokenClaims = jwtClaims(ctx.Tokens.Fabric);
       app = {
         upn: identity.upn,
+        oid: identity.oid,
         type: identity.type,
         audience: claimString(tokenClaims, 'aud') || undefined,
         appId: claimString(tokenClaims, 'appid', 'azp') || undefined,
@@ -510,6 +533,21 @@ async function osmosContext(
   return { data, run, request: handoff };
 }
 
+/** Point the handoff at the real LH_Osmos and persist the correction on the run. */
+async function osmosRequestForLakehouse(
+  ctx: Ctx<AudienceType.Fabric>,
+  data: Data,
+  run: AgentRunRecord,
+  request: OsmosRequest,
+): Promise<OsmosRequest> {
+  const resolved = await resolveOsmosLakehouse(ctx.Tokens.Fabric, request);
+  if (resolved.lakehouseId !== request.lakehouseId || resolved.instruction !== request.instruction) {
+    const handoff = JSON.stringify(resolved);
+    if (handoff.length <= 4000) await data.AgentRun.update({ id: run.id }, { handoff, updatedAt: new Date() });
+  }
+  return resolved;
+}
+
 /** Create the Project Osmos task the agents composed for this run. */
 udf.func(
   'createOsmosTask',
@@ -519,7 +557,8 @@ udf.func(
     if (run.osmosTaskId) return { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Running' };
     let result: OsmosTaskView;
     try {
-      result = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, request);
+      const target = await osmosRequestForLakehouse(ctx, data, run, request);
+      result = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, target);
     } catch (error) {
       return { ok: false, message: str((error as Error).message, 1000) || 'Project Osmos did not accept the request.' };
     }

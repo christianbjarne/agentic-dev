@@ -29,7 +29,7 @@ export function ChatPanel({
   sending: boolean;
   busy: boolean;
   error: string | null;
-  canCreateOsmos: boolean;
+  canCreateOsmos: boolean | null;
   onSend: (prompt: string) => Promise<boolean>;
 }) {
   const [prompt, setPrompt] = useState('');
@@ -118,7 +118,7 @@ export function ChatPanel({
   );
 }
 
-function RunMessages({ run, canCreateOsmos }: { run: RunView; canCreateOsmos: boolean }) {
+function RunMessages({ run, canCreateOsmos }: { run: RunView; canCreateOsmos: boolean | null }) {
   const specialists = run.events.filter((event) => event.agent !== 'fabric_orchestrator');
   const done = run.status === 'completed' || run.status === 'failed';
   return (
@@ -164,7 +164,7 @@ function RunMessages({ run, canCreateOsmos }: { run: RunView; canCreateOsmos: bo
   );
 }
 
-function OsmosCard({ run, canCreate }: { run: RunView; canCreate: boolean }) {
+function OsmosCard({ run, canCreate }: { run: RunView; canCreate: boolean | null }) {
   const [task, setTask] = useState<OsmosTaskView | undefined>(run.osmosTask);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -245,11 +245,18 @@ function OsmosCard({ run, canCreate }: { run: RunView; canCreate: boolean }) {
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-300">
-          <Button disabled={!canCreate || working} onClick={() => void act('create')}>
-            {working && <Loader2 aria-hidden className="icon-size-200 animate-spin motion-reduce:animate-none" />}
+          <Button disabled={canCreate !== true || working} onClick={() => void act('create')}>
+            {(working || canCreate === null) && (
+              <Loader2 aria-hidden className="icon-size-200 animate-spin motion-reduce:animate-none" />
+            )}
             Create Osmos task
           </Button>
-          {!canCreate && (
+          {canCreate === null && (
+            <span role="status" className="text-[length:var(--text-200)] text-muted-foreground">
+              Checking your sign-in…
+            </span>
+          )}
+          {canCreate === false && (
             <span className="text-[length:var(--text-200)] text-muted-foreground">
               Only the app owner can create Osmos tasks from this app. The task is created as the owner through a Fabric notebook.
             </span>

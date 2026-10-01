@@ -83,6 +83,13 @@
           "type": "FabricItem",
           "alias": "",
           "audienceType": "AzureAI"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
         }
       ],
       "fabricProperties": {
@@ -96,12 +103,12 @@
           },
           {
             "name": "ctx",
-            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.AzureAI>",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>",
             "hasDefaultValue": false
           }
         ]
       },
-      "functionCode": "udf.func(\n  'pollRun',\n  async (runKey: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI>): Promise<Wire<RunView>> => {\n    const owner = callerSubject(ctx);\n    const data = ctx.getDataClient();\n    const run = await findRun(data, runKey);\n    if (run.status === 'completed' || run.status === 'failed' || !run.responseId) {\n      return buildView(data, run);\n    }\n    const { parsed, error } = await getResponse(ctx.Tokens.AzureAI, run.responseId);\n    if (!parsed) {\n      if (Date.now() - new Date(run.updatedAt).getTime() > STALE_RUN_MS) {\n        await data.AgentRun.update(\n          { id: run.id },\n          { status: 'failed', error: str(error ?? 'The run could not be read.', 2000), updatedAt: new Date() },\n        );\n        return buildView(data, await findRun(data, runKey));\n      }\n      const view = await buildView(data, run);\n      return { ...view, error };\n    }\n    await recordProgress(data, owner, run, parsed);\n    const latest = TERMINAL.includes(parsed.status) ? await finishRun(data, owner, run, parsed) : run;\n    return buildView(data, latest);\n  },\n  [],\n)"
+      "functionCode": "udf.func(\n  'pollRun',\n  async (\n    runKey: string,\n    ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,\n  ): Promise<Wire<RunView>> => {\n    const owner = callerSubject(ctx);\n    const data = ctx.getDataClient();\n    const run = await findRun(data, runKey);\n    if (run.status === 'completed' || run.status === 'failed' || !run.responseId) {\n      return buildView(data, run);\n    }\n    const { parsed, error } = await getResponse(ctx.Tokens.AzureAI, run.responseId);\n    if (!parsed) {\n      if (Date.now() - new Date(run.updatedAt).getTime() > STALE_RUN_MS) {\n        await data.AgentRun.update(\n          { id: run.id },\n          { status: 'failed', error: str(error ?? 'The run could not be read.', 2000), updatedAt: new Date() },\n        );\n        return buildView(data, await findRun(data, runKey));\n      }\n      const view = await buildView(data, run);\n      return { ...view, error };\n    }\n    await recordProgress(data, owner, run, parsed);\n    if (TERMINAL.includes(parsed.status) && parsed.handoff) {\n      try {\n        parsed.handoff = await resolveOsmosLakehouse(ctx.Tokens.Fabric, parsed.handoff);\n      } catch {\n        // createOsmosTask resolves again and reports a missing LH_Osmos to the user.\n      }\n    }\n    const latest = TERMINAL.includes(parsed.status) ? await finishRun(data, owner, run, parsed) : run;\n    return buildView(data, latest);\n  },\n  [],\n)"
     },
     {
       "name": "getConversation",
@@ -224,7 +231,7 @@
           }
         ]
       },
-      "functionCode": "udf.func(\n  'whoAmI',\n  async (ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<IdentityView>> => {\n    const claims = jwtClaims(ctx.accessToken);\n    const subject = callerSubject(ctx);\n    let app: IdentityView['appIdentity'];\n    let same = false;\n    try {\n      const identity = appIdentity(ctx);\n      const tokenClaims = jwtClaims(ctx.Tokens.Fabric);\n      app = {\n        upn: identity.upn,\n        type: identity.type,\n        audience: claimString(tokenClaims, 'aud') || undefined,\n        appId: claimString(tokenClaims, 'appid', 'azp') || undefined,\n        scopes: claimString(tokenClaims, 'scp').slice(0, 1000) || undefined,\n      };\n      same = callerIsAppIdentity(ctx);\n    } catch {\n      app = undefined;\n    }\n    return {\n      caller: {\n        subject,\n        name: claimString(claims, 'name') || undefined,\n        email: claimString(claims, 'email', 'upn', 'preferred_username') || undefined,\n      },\n      appIdentity: app,\n      callerIsAppIdentity: same,\n      allowedWorkspaces: ALLOWED_WORKSPACES,\n    };\n  },\n  [],\n)"
+      "functionCode": "udf.func(\n  'whoAmI',\n  async (ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<IdentityView>> => {\n    const claims = jwtClaims(ctx.accessToken);\n    const subject = callerSubject(ctx);\n    let app: IdentityView['appIdentity'];\n    let same = false;\n    try {\n      const identity = appIdentity(ctx);\n      const tokenClaims = jwtClaims(ctx.Tokens.Fabric);\n      app = {\n        upn: identity.upn,\n        oid: identity.oid,\n        type: identity.type,\n        audience: claimString(tokenClaims, 'aud') || undefined,\n        appId: claimString(tokenClaims, 'appid', 'azp') || undefined,\n        scopes: claimString(tokenClaims, 'scp').slice(0, 1000) || undefined,\n      };\n      same = callerIsAppIdentity(ctx);\n    } catch {\n      app = undefined;\n    }\n    return {\n      caller: {\n        subject,\n        name: claimString(claims, 'name') || undefined,\n        email: claimString(claims, 'email', 'upn', 'preferred_username') || undefined,\n      },\n      appIdentity: app,\n      callerIsAppIdentity: same,\n      allowedWorkspaces: ALLOWED_WORKSPACES,\n    };\n  },\n  [],\n)"
     },
     {
       "name": "createOsmosTask",
@@ -269,7 +276,7 @@
           }
         ]
       },
-      "functionCode": "udf.func(\n  'createOsmosTask',\n  async (runKey: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<OsmosTaskView>> => {\n    const owner = callerSubject(ctx);\n    const { data, run, request } = await osmosContext(ctx, runKey);\n    if (run.osmosTaskId) return { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Running' };\n    let result: OsmosTaskView;\n    try {\n      result = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, request);\n    } catch (error) {\n      return { ok: false, message: str((error as Error).message, 1000) || 'Project Osmos did not accept the request.' };\n    }\n    if (result.ok && result.taskId) {\n      const now = new Date();\n      await data.AgentRun.update({ id: run.id }, { osmosTaskId: result.taskId, osmosStatus: result.status ?? 'Submitting', updatedAt: now });\n      await data.RunEvent.create({\n        runKey: run.runKey,\n        eventKey: `${run.runKey}:osmos:${result.taskId}`,\n        agent: 'osmos_data_engineer',\n        status: 'working',\n        task: str(`Project Osmos task: ${request.displayName}`, 1000),\n        summary: `Task ${result.taskId} submitted as you via the Fabric notebook bridge. ${result.taskPage ?? ''}`,\n        createdAt: now,\n        updatedAt: now,\n        owner_id: owner,\n      });\n    }\n    return result;\n  },\n  [],\n)"
+      "functionCode": "udf.func(\n  'createOsmosTask',\n  async (runKey: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<OsmosTaskView>> => {\n    const owner = callerSubject(ctx);\n    const { data, run, request } = await osmosContext(ctx, runKey);\n    if (run.osmosTaskId) return { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Running' };\n    let result: OsmosTaskView;\n    try {\n      const target = await osmosRequestForLakehouse(ctx, data, run, request);\n      result = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, target);\n    } catch (error) {\n      return { ok: false, message: str((error as Error).message, 1000) || 'Project Osmos did not accept the request.' };\n    }\n    if (result.ok && result.taskId) {\n      const now = new Date();\n      await data.AgentRun.update({ id: run.id }, { osmosTaskId: result.taskId, osmosStatus: result.status ?? 'Submitting', updatedAt: now });\n      await data.RunEvent.create({\n        runKey: run.runKey,\n        eventKey: `${run.runKey}:osmos:${result.taskId}`,\n        agent: 'osmos_data_engineer',\n        status: 'working',\n        task: str(`Project Osmos task: ${request.displayName}`, 1000),\n        summary: `Task ${result.taskId} submitted as you via the Fabric notebook bridge. ${result.taskPage ?? ''}`,\n        createdAt: now,\n        updatedAt: now,\n        owner_id: owner,\n      });\n    }\n    return result;\n  },\n  [],\n)"
     },
     {
       "name": "getOsmosTask",

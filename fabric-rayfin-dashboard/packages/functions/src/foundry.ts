@@ -254,8 +254,8 @@ function osmosHandoffFromDelegations(
       new RegExp(`/groups/(${GUID_IN_TEXT})`, 'i'),
     ]);
     const lakehouseId = firstGuid(sources, [
-      new RegExp(`default (?:spark-session )?lakehouse(?: id)?[\\s\\S]{0,80}?(${GUID_IN_TEXT})`, 'i'),
       new RegExp(`LH_Osmos\\W{0,6}(?:id\\W{0,4})?(${GUID_IN_TEXT})`, 'i'),
+      new RegExp(`default (?:spark-session )?lakehouse(?: id)?[\\s\\S]{0,80}?(${GUID_IN_TEXT})`, 'i'),
       new RegExp(`/lakehouses/(${GUID_IN_TEXT})`, 'i'),
     ]);
     if (!workspaceId || !lakehouseId) continue;

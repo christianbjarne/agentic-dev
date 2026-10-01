@@ -25,7 +25,9 @@ function App() {
   const chat = useConversation(onConversationChange);
   const feed = useLiveFeed();
   const workspace = useWorkspaceStatus();
-  const { identity } = useIdentity();
+  const { identity, error: identityError } = useIdentity();
+  // null = still checking. If whoAmI keeps failing, let the server-side guard decide.
+  const canCreateOsmos = identity ? identity.callerIsAppIdentity : identityError ? true : null;
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const graphEvents = chat.runs.some((run) => run.status === 'working' || run.status === 'queued')
@@ -114,7 +116,7 @@ function App() {
               sending={chat.sending}
               busy={chat.busy}
               error={chat.error}
-              canCreateOsmos={identity?.callerIsAppIdentity ?? false}
+              canCreateOsmos={canCreateOsmos}
               onSend={chat.send}
             />
           </div>

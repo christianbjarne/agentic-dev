@@ -281,12 +281,20 @@ export function useIdentity() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const client = await getRayfinClient();
-        const result = await client.functions.whoAmI.invoke();
-        if (!cancelled) setIdentity(result);
-      } catch (err) {
-        if (!cancelled) setError(errorMessage(err));
+      // whoAmI can fail on a cold start; retry so the Osmos button doesn't stay disabled.
+      for (let attempt = 0; attempt < 4 && !cancelled; attempt += 1) {
+        try {
+          const client = await getRayfinClient();
+          const result = await client.functions.whoAmI.invoke();
+          if (!cancelled) {
+            setIdentity(result);
+            setError(null);
+          }
+          return;
+        } catch (err) {
+          if (!cancelled) setError(errorMessage(err));
+          await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+        }
       }
     })();
     return () => {

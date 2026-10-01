@@ -244,6 +244,40 @@ export interface OsmosRequest {
   instruction: string;
 }
 
+/** Project Osmos tasks always run against this lakehouse in the target workspace. */
+export const OSMOS_LAKEHOUSE = 'LH_Osmos';
+
+/**
+ * Agent-composed handoffs sometimes label another lakehouse (e.g. bronze_layer_lh) as
+ * LH_Osmos. Resolve the real LH_Osmos by name in the handoff workspace, and rewrite the
+ * wrong id where the instruction names it as LH_Osmos or the default lakehouse.
+ * Throws when the workspace has no LH_Osmos; never falls back to another lakehouse.
+ */
+export async function resolveOsmosLakehouse(token: string, req: OsmosRequest): Promise<OsmosRequest> {
+  const result = await request('GET', `${FABRIC_API}/v1/workspaces/${req.workspaceId}/lakehouses`, bearer(token));
+  if (!result.ok) throw new Error(describeFailure('Listing the target workspace lakehouses', result));
+  const lakehouses = asArray(asRecord(result.body).value).map(asRecord);
+  const target = lakehouses.find((item) => str(item.displayName, 256).toLowerCase() === OSMOS_LAKEHOUSE.toLowerCase());
+  const lakehouseId = str(target?.id, 64).toLowerCase();
+  if (!lakehouseId) {
+    throw new Error(`Workspace ${req.workspaceId} has no ${OSMOS_LAKEHOUSE} lakehouse; create it before running Project Osmos.`);
+  }
+  return { ...req, lakehouseId, instruction: fixOsmosLakehouseIds(req.instruction, req.lakehouseId, lakehouseId) };
+}
+
+/** Replace wrongId where the text labels it as LH_Osmos or the default lakehouse. */
+export function fixOsmosLakehouseIds(text: string, wrongId: string, rightId: string): string {
+  const wrong = wrongId.toLowerCase();
+  if (!wrong || wrong === rightId.toLowerCase()) return text;
+  const label = new RegExp(
+    `(LH_Osmos|default (?:spark[- ]session )?lakehouse)([^\\n]{0,80}?)(${GUID})`,
+    'gi',
+  );
+  return text.replace(label, (match: string, name: string, between: string, id: string) =>
+    id.toLowerCase() === wrong ? `${name}${between}${rightId}` : match,
+  );
+}
+
 export function osmosTaskPage(workspaceId: string, lakehouseId: string, taskId: string): string {
   return (
     `https://app.fabric.microsoft.com/groups/${workspaceId}/lakehouses/${lakehouseId}` +

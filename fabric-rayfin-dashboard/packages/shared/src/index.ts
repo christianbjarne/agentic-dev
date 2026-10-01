@@ -155,7 +155,7 @@ export interface WorkspaceStatusView {
 
 export interface IdentityView {
   caller: { subject: string; name?: string; email?: string };
-  appIdentity?: { upn?: string; type?: string; audience?: string; appId?: string; scopes?: string };
+  appIdentity?: { upn?: string; oid?: string; type?: string; audience?: string; appId?: string; scopes?: string };
   callerIsAppIdentity: boolean;
   allowedWorkspaces: string[];
 }
