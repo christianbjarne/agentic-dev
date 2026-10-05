@@ -1,6 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 
+vi.mock('@/hooks/use-read', () => ({
+  useRead: () => ({ data: null, loading: false, error: null, refresh: () => {} }),
+}));
 vi.mock('@/hooks/use-command-center', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/use-command-center')>();
   const idle = { loading: false, error: null };
@@ -15,6 +18,8 @@ vi.mock('@/hooks/use-command-center', async (importOriginal) => {
       busy: false,
       select: () => {},
       send: async () => true,
+      pollingPaused: false,
+      resumePolling: () => {},
     }),
     useLiveFeed: () => ({ ...idle, events: [] }),
     useWorkspaceStatus: () => ({ ...idle, status: null, refresh: async () => {} }),
@@ -35,6 +40,7 @@ describe('App', () => {
     render(<App />);
     expect(screen.getByRole('img', { name: /Guideline auditor: Idle/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /Fabric orchestrator: Idle/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: /: Idle/ })).toHaveLength(12);
+    expect(screen.getAllByRole('img', { name: /: Idle/ })).toHaveLength(11);
+    expect(screen.queryByText('Release intelligence')).not.toBeInTheDocument();
   });
 });

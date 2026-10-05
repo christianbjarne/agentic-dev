@@ -16,7 +16,13 @@ import type {
   RunView,
   UniversalAppSchema,
   WorkspaceStatusView,
+  WorkspaceChoice,
+  WorkspaceBranchPage,
+  GitHubRepository,
+  GitHubBranchView,
+  GitHubFile,
 } from '@rayfin-app/shared';
+import { isRunTerminal, isTaskTerminal, TERMINAL_RUN_STATES } from '@rayfin-app/shared';
 import { randomUUID } from 'node:crypto';
 import {
   promptWorkspaceContext,
@@ -24,11 +30,14 @@ import {
   resolveOsmosLakehouse,
   submitOsmosBridge,
   workspaceStatus,
+  listWorkspaces,
+  workspaceBranches,
   type OsmosRequest,
   type PromptWorkspaceContext,
 } from './fabric.js';
 import { envelope, getResponse, startResponse, type ParsedResponse } from './foundry.js';
 import { claimString, HEX_KEY_PATTERN, jwtClaims, str, toIso, UUID_PATTERN } from './http.js';
+import { githubRepositories, githubBranches, githubBranchView, githubCommitFiles } from './github.js';
 
 const udf = new UserDataFunctions();
 
@@ -72,11 +81,11 @@ function newKey(): string {
 }
 
 function asStatus(value: string): RunStatus {
-  return value === 'completed' || value === 'failed' || value === 'queued' ? value : 'working';
+  return isRunTerminal(value) || value === 'queued' || value === 'working' ? value as RunStatus : 'failed';
 }
 
 function asAgentStatus(value: string): AgentStatus {
-  return value === 'completed' || value === 'failed' || value === 'working' ? value : 'idle';
+  return isRunTerminal(value) || value === 'working' ? value as AgentStatus : 'idle';
 }
 
 function parseHandoff(raw?: string | null): OsmosHandoff | undefined {
@@ -96,7 +105,7 @@ function parseHandoff(raw?: string | null): OsmosHandoff | undefined {
  */
 const RUN_FIELDS: (keyof AgentRunRecord)[] = [
   'id', 'runKey', 'conversationKey', 'prompt', 'status', 'responseId', 'error', 'handoff',
-  'osmosTaskId', 'osmosStatus', 'createdAt', 'updatedAt', 'owner_id',
+  'osmosTaskId', 'osmosStatus', 'osmosJobLocation', 'osmosStartedAt', 'createdAt', 'updatedAt', 'owner_id',
 ];
 const EVENT_FIELDS: (keyof RunEventRecord)[] = [
   'id', 'runKey', 'eventKey', 'agent', 'status', 'task', 'summary', 'createdAt', 'updatedAt', 'owner_id',
@@ -133,11 +142,11 @@ async function findRun(data: Data, runKey: string): Promise<AgentRunRecord> {
 
 function toEventView(event: RunEventRecord): RunEventView {
   return {
-    agent: event.agent,
+    agent: event.eventKey.includes(':osmos:') ? 'osmos_task' : event.agent,
     status: asAgentStatus(event.status),
     task: event.task,
     summary: event.summary ?? undefined,
-    createdAt: toIso(event.createdAt),
+    createdAt: toIso(event.updatedAt),
     runKey: event.runKey,
   };
 }
@@ -159,13 +168,14 @@ async function buildView(data: Data, run: AgentRunRecord): Promise<RunView> {
     runKey: run.runKey,
     conversationId: run.conversationKey,
     status: asStatus(run.status),
+    responseId: run.responseId ?? undefined,
     prompt: run.prompt,
     response: response || undefined,
     error: run.error || undefined,
-    events: events.map(toEventView),
+    events: events.filter((event) => event.agent !== 'release_intelligence').map(toEventView),
     osmos: parseHandoff(run.handoff),
     osmosTask: run.osmosTaskId
-      ? { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Running' }
+      ? { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Submitting', running: !isTaskTerminal(run.osmosStatus) }
       : undefined,
     createdAt: toIso(run.createdAt),
     updatedAt: toIso(run.updatedAt),
@@ -206,7 +216,7 @@ async function upsertEvent(
   }
 }
 
-const TERMINAL = ['completed', 'failed', 'cancelled', 'incomplete'];
+const TERMINAL: readonly string[] = TERMINAL_RUN_STATES;
 
 async function recordProgress(data: Data, owner: string, run: AgentRunRecord, parsed: ParsedResponse): Promise<void> {
   const rows = await readEvents(data, run.runKey);
@@ -214,9 +224,13 @@ async function recordProgress(data: Data, owner: string, run: AgentRunRecord, pa
   for (const delegation of parsed.delegations) {
     await upsertEvent(data, existing, owner, run.runKey, `${run.runKey}:${delegation.callId}`, {
       agent: delegation.agent,
-      status: delegation.status,
+      status: delegation.status === 'working' && isRunTerminal(parsed.status)
+        ? parsed.status === 'completed' ? 'incomplete' : parsed.status
+        : delegation.status,
       task: delegation.task,
-      summary: delegation.summary,
+      summary: delegation.status === 'working' && isRunTerminal(parsed.status)
+        ? `Response ${parsed.status}; no specialist result was returned.`
+        : delegation.summary,
     });
   }
   const terminal = TERMINAL.includes(parsed.status);
@@ -227,7 +241,7 @@ async function recordProgress(data: Data, owner: string, run: AgentRunRecord, pa
   else summary = parsed.error ?? `Run ${parsed.status}.`;
   await upsertEvent(data, existing, owner, run.runKey, `${run.runKey}:orchestrator`, {
     agent: ORCHESTRATOR,
-    status: !terminal ? 'working' : parsed.status === 'completed' ? 'completed' : 'failed',
+    status: !terminal ? 'working' : parsed.status,
     task: str(run.prompt, 1000),
     summary,
   });
@@ -236,9 +250,12 @@ async function recordProgress(data: Data, owner: string, run: AgentRunRecord, pa
 async function finishRun(data: Data, owner: string, run: AgentRunRecord, parsed: ParsedResponse): Promise<AgentRunRecord> {
   const now = new Date();
   const completed = parsed.status === 'completed';
-  if (completed) {
+  if (parsed.text || completed) {
     const text = parsed.text || '(The orchestrator returned no text.)';
+    const existing = await data.RunOutput.select(['seq']).where({ runKey: { eq: run.runKey } }).first(100).execute();
+    const sequences = new Set(existing.map((row) => row.seq));
     for (let seq = 0, offset = 0; offset < text.length && seq < 100; seq += 1, offset += OUTPUT_CHUNK) {
+      if (sequences.has(seq)) continue;
       await data.RunOutput.create({
         runKey: run.runKey,
         seq,
@@ -251,8 +268,8 @@ async function finishRun(data: Data, owner: string, run: AgentRunRecord, parsed:
   await data.AgentRun.update(
     { id: run.id },
     {
-      status: completed ? 'completed' : 'failed',
-      error: completed ? undefined : str(parsed.error ?? `Run ${parsed.status}.`, 2000),
+      status: parsed.status,
+      error: parsed.error ? str(parsed.error, 2000) : completed ? '' : str(`Run ${parsed.status}.`, 2000),
       handoff: handoff && handoff.length <= 4000 ? handoff : undefined,
       updatedAt: now,
     },
@@ -271,6 +288,89 @@ async function finishRun(data: Data, owner: string, run: AgentRunRecord, parsed:
   }
   return findRun(data, run.runKey);
 }
+
+async function pollStoredRun(ctx: Ctx<AudienceType.AzureAI | AudienceType.Fabric>, runKey: string): Promise<RunView> {
+  const owner = callerSubject(ctx);
+  const data = ctx.getDataClient();
+  const run = await findRun(data, runKey);
+  if (isRunTerminal(run.status)) {
+    // Repair legacy dangling "working" events without inventing specialist results.
+    const events = await readEvents(data, runKey);
+    for (const event of events.filter((item) => item.status === 'working' && !item.eventKey.includes(':osmos:'))) {
+      await data.RunEvent.update({ id: event.id }, {
+        status: event.agent === ORCHESTRATOR ? run.status : 'incomplete',
+        summary: 'Run is terminal; no further delegation result is available.',
+        updatedAt: new Date(),
+      });
+    }
+    return buildView(data, run);
+  }
+  let fetched: Awaited<ReturnType<typeof getResponse>> | undefined;
+  try {
+    if (run.responseId) fetched = await getResponse(ctx.Tokens.AzureAI, run.responseId);
+  } catch {
+    // Bounded by the persisted run deadline below; surfaced while retryable.
+  }
+  const elapsed = Date.now() - new Date(run.createdAt).getTime();
+  let parsed = fetched?.parsed;
+  if (!parsed || !isRunTerminal(parsed.status)) {
+    if (elapsed >= STALE_RUN_MS || (!run.responseId && elapsed >= 90_000)) {
+      parsed = {
+        id: run.responseId ?? '', status: 'failed', text: '', delegations: [],
+        error: 'Run monitoring timed out. The command center stopped waiting; check Foundry before retrying a request with side effects.',
+      };
+    } else if (!parsed) {
+      return { ...await buildView(data, run), error: fetched?.error ?? 'Unable to read the orchestrator status. Retrying with backoff.' };
+    }
+  }
+  await recordProgress(data, owner, run, parsed);
+  if (isRunTerminal(parsed.status)) {
+    const events = await readEvents(data, runKey);
+    for (const event of events.filter((item) => item.status === 'working' && !item.eventKey.includes(':osmos:'))) {
+      await data.RunEvent.update({ id: event.id }, {
+        status: parsed.status === 'completed' ? 'incomplete' : parsed.status,
+        summary: `Run ${parsed.status}; no further specialist result is available.`,
+        updatedAt: new Date(),
+      });
+    }
+    if (parsed.handoff) {
+      try {
+        parsed.handoff = await resolveOsmosLakehouse(ctx.Tokens.Fabric, parsed.handoff);
+      } catch {
+        parsed.error = 'The Osmos lakehouse could not be verified. Task creation will revalidate LH_Osmos before submitting.';
+      }
+    }
+    return buildView(data, await finishRun(data, owner, run, parsed));
+  }
+  await data.AgentRun.update({ id: run.id }, { status: parsed.status === 'queued' ? 'queued' : 'working', updatedAt: new Date() });
+  return buildView(data, await findRun(data, runKey));
+}
+
+udf.func(
+  'getLiveFeed',
+  async (ctx: RayfinContext<UniversalAppSchema>): Promise<Wire<RunEventView[]>> => {
+    callerSubject(ctx);
+    const data = ctx.getDataClient();
+    const events = await data.RunEvent.select(EVENT_FIELDS).orderBy({ updatedAt: 'desc' }).first(100).execute();
+    const runs = new Map<string, AgentRunRecord | undefined>();
+    await Promise.all([...new Set(events.map((event) => event.runKey))].map(async (key) => runs.set(key, await readRun(data, key))));
+    return events.filter((event) => event.agent !== 'release_intelligence').map((event) => {
+      const run = runs.get(event.runKey);
+      const view = toEventView(event as RunEventRecord);
+      if (view.status === 'working' && run && !event.eventKey.includes(':osmos:')) {
+        if (isRunTerminal(run.status)) {
+          view.status = event.agent === ORCHESTRATOR ? asAgentStatus(run.status) : 'incomplete';
+          view.summary = event.summary ?? 'Run is terminal; no specialist result is available.';
+        } else if (Date.now() - new Date(run.createdAt).getTime() >= STALE_RUN_MS) {
+          view.status = 'failed';
+          view.summary = 'Run monitoring deadline exceeded. Reopen the conversation to reconcile Foundry status.';
+        }
+      }
+      return view;
+    });
+  },
+  [],
+);
 
 /** Send a prompt to the Foundry fabric-orchestrator as a background response. */
 udf.func(
@@ -292,10 +392,13 @@ udf.func(
     if (conversationId && !conversation) throw new Error('Conversation not found.');
     if (conversation?.activeRunKey) {
       const active = await readRun(data, conversation.activeRunKey);
+      if (active && !isRunTerminal(active.status) && now.getTime() - new Date(active.createdAt).getTime() >= STALE_RUN_MS) {
+        await pollStoredRun(ctx, active.runKey);
+      }
       if (
         active &&
-        !['completed', 'failed'].includes(active.status) &&
-        now.getTime() - new Date(active.updatedAt).getTime() < STALE_RUN_MS
+        !isRunTerminal(active.status) &&
+        now.getTime() - new Date(active.createdAt).getTime() < STALE_RUN_MS
       ) {
         throw new Error('The orchestrator is still working on the previous prompt in this conversation.');
       }
@@ -332,12 +435,17 @@ udf.func(
       workspaceContext = undefined;
     }
 
-    const started = await startResponse(
+    let started: Awaited<ReturnType<typeof startResponse>>;
+    try {
+      started = await startResponse(
       ctx.Tokens.AzureAI,
       envelope(runKey, text, workspaceContext?.text),
       conversation.previousResponseId,
       conversation.agentSessionId,
-    );
+      );
+    } catch {
+      started = { reset: false, error: 'The orchestrator submission timed out or could not be reached. Try again.' };
+    }
     if (!started.started) {
       await data.AgentRun.update({ id: createdRun.id }, { status: 'failed', error: started.error, updatedAt: new Date() });
     } else {
@@ -371,6 +479,11 @@ udf.func(
         updatedAt: new Date(),
       },
     );
+    if (started.started && isRunTerminal(started.started.status)) {
+      const run = await findRun(data, runKey);
+      await recordProgress(data, owner, run, started.started.parsed);
+      await finishRun(data, owner, run, started.started.parsed);
+    }
     return buildView(data, await findRun(data, runKey));
   },
   [],
@@ -383,34 +496,7 @@ udf.func(
     runKey: string,
     ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,
   ): Promise<Wire<RunView>> => {
-    const owner = callerSubject(ctx);
-    const data = ctx.getDataClient();
-    const run = await findRun(data, runKey);
-    if (run.status === 'completed' || run.status === 'failed' || !run.responseId) {
-      return buildView(data, run);
-    }
-    const { parsed, error } = await getResponse(ctx.Tokens.AzureAI, run.responseId);
-    if (!parsed) {
-      if (Date.now() - new Date(run.updatedAt).getTime() > STALE_RUN_MS) {
-        await data.AgentRun.update(
-          { id: run.id },
-          { status: 'failed', error: str(error ?? 'The run could not be read.', 2000), updatedAt: new Date() },
-        );
-        return buildView(data, await findRun(data, runKey));
-      }
-      const view = await buildView(data, run);
-      return { ...view, error };
-    }
-    await recordProgress(data, owner, run, parsed);
-    if (TERMINAL.includes(parsed.status) && parsed.handoff) {
-      try {
-        parsed.handoff = await resolveOsmosLakehouse(ctx.Tokens.Fabric, parsed.handoff);
-      } catch {
-        // createOsmosTask resolves again and reports a missing LH_Osmos to the user.
-      }
-    }
-    const latest = TERMINAL.includes(parsed.status) ? await finishRun(data, owner, run, parsed) : run;
-    return buildView(data, latest);
+    return pollStoredRun(ctx, runKey);
   },
   [],
 );
@@ -418,7 +504,10 @@ udf.func(
 /** All runs of one conversation, oldest first, for restoring chat history. */
 udf.func(
   'getConversation',
-  async (conversationId: string, ctx: RayfinContext<UniversalAppSchema>): Promise<Wire<RunView[]>> => {
+  async (
+    conversationId: string,
+    ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,
+  ): Promise<Wire<RunView[]>> => {
     callerSubject(ctx);
     if (!UUID_PATTERN.test(conversationId)) throw new Error('Invalid conversation id.');
     const data = ctx.getDataClient();
@@ -427,7 +516,7 @@ udf.func(
       .orderBy({ createdAt: 'asc' })
       .first(50)
       .execute();
-    return Promise.all(runs.map((run) => buildView(data, run as AgentRunRecord)));
+    return Promise.all(runs.map((run) => pollStoredRun(ctx, run.runKey)));
   },
   [],
 );
@@ -435,20 +524,83 @@ udf.func(
 /** Native Fabric status for the app workspace: items, job instances, Git. */
 udf.func(
   'getWorkspaceStatus',
-  async (workspaceId: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<WorkspaceStatusView>> => {
+  async (workspaceId: string, gitOperationId: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<WorkspaceStatusView>> => {
     callerSubject(ctx);
     const id = (workspaceId || ALLOWED_WORKSPACES[0]).toLowerCase();
-    if (!ALLOWED_WORKSPACES.includes(id)) {
+    if (!UUID_PATTERN.test(id)) throw new Error('Select a valid workspace.');
+    if (!ALLOWED_WORKSPACES.includes(id) && !callerIsAppIdentity(ctx)) {
       return {
         ok: false,
-        message: 'This dashboard only reads its own workspace.',
+        message: 'Only the app owner can browse additional workspaces with the app identity.',
         workspaceId: id,
         itemCounts: [],
+        items: [],
         jobs: [],
         checkedAt: new Date().toISOString(),
       };
     }
-    return workspaceStatus(ctx.Tokens.Fabric, id);
+    if (gitOperationId && !UUID_PATTERN.test(gitOperationId)) throw new Error('Invalid Git operation id.');
+    return workspaceStatus(ctx.Tokens.Fabric, id, gitOperationId);
+  },
+  [],
+);
+
+udf.func(
+  'getWorkspaceBranches',
+  async (workspaceId: string, cursor: number, discover: boolean, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<WorkspaceBranchPage>> => {
+    requireOwner(ctx);
+    if (!UUID_PATTERN.test(workspaceId)) throw new Error('Invalid workspace.');
+    if (!Number.isInteger(cursor) || cursor < 0 || cursor > 5000) throw new Error('Invalid branch-workspace discovery cursor.');
+    return workspaceBranches(ctx.Tokens.Fabric, workspaceId, cursor, discover);
+  },
+  [],
+);
+
+udf.func(
+  'getWorkspaces',
+  async (ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<WorkspaceChoice[]>> => {
+    callerSubject(ctx);
+    if (!callerIsAppIdentity(ctx)) {
+      return [{ id: APP_WORKSPACE_ID, name: 'Command center workspace' }];
+    }
+    return listWorkspaces(ctx.Tokens.Fabric);
+  },
+  [],
+);
+
+function requireOwner(ctx: Ctx<AudienceType.Fabric>): void {
+  callerSubject(ctx);
+  if (!callerIsAppIdentity(ctx)) throw new Error('Repository browsing uses the configured GitHub credential and is restricted to the app owner.');
+}
+udf.func(
+  'getGitHubRepositories',
+  async (ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<GitHubRepository[]>> => {
+    requireOwner(ctx);
+    return githubRepositories(ctx.Secrets.GITHUB_READ_TOKEN);
+  },
+  [],
+);
+udf.func(
+  'getGitHubBranches',
+  async (repository: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<string[]> => {
+    requireOwner(ctx);
+    return githubBranches(ctx.Secrets.GITHUB_READ_TOKEN, repository);
+  },
+  [],
+);
+udf.func(
+  'getGitHubBranch',
+  async (repository: string, branch: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<GitHubBranchView>> => {
+    requireOwner(ctx);
+    return githubBranchView(ctx.Secrets.GITHUB_READ_TOKEN, repository, branch);
+  },
+  [],
+);
+udf.func(
+  'getGitHubCommit',
+  async (repository: string, sha: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<GitHubFile[]>> => {
+    requireOwner(ctx);
+    return githubCommitFiles(ctx.Secrets.GITHUB_READ_TOKEN, repository, sha);
   },
   [],
 );
@@ -564,11 +716,14 @@ udf.func(
     }
     if (result.ok && result.taskId) {
       const now = new Date();
-      await data.AgentRun.update({ id: run.id }, { osmosTaskId: result.taskId, osmosStatus: result.status ?? 'Submitting', updatedAt: now });
+      await data.AgentRun.update({ id: run.id }, {
+        osmosTaskId: result.taskId, osmosStatus: result.status ?? 'Submitting',
+        osmosJobLocation: result.jobLocation, osmosStartedAt: now, updatedAt: now,
+      });
       await data.RunEvent.create({
         runKey: run.runKey,
         eventKey: `${run.runKey}:osmos:${result.taskId}`,
-        agent: 'osmos_data_engineer',
+        agent: 'osmos_task',
         status: 'working',
         task: str(`Project Osmos task: ${request.displayName}`, 1000),
         summary: `Task ${result.taskId} submitted as you via the Fabric notebook bridge. ${result.taskPage ?? ''}`,
@@ -593,13 +748,25 @@ udf.func(
     if (!run.osmosTaskId) return { ok: false, message: 'No Project Osmos task has been created for this run.' };
     let result: OsmosTaskView;
     try {
-      result = (await readOsmosBridge(ctx.Tokens.Fabric, ctx.Tokens.Storage, APP_WORKSPACE_ID, request, run.osmosTaskId)) ?? {
+      const target = await osmosRequestForLakehouse(ctx, data, run, request);
+      result = (await readOsmosBridge(ctx.Tokens.Fabric, ctx.Tokens.Storage, APP_WORKSPACE_ID, target, run.osmosTaskId, run.osmosJobLocation ?? undefined)) ?? {
         ok: true,
         taskId: run.osmosTaskId,
         status: run.osmosStatus ?? 'Submitting',
         running: true,
         message: 'Waiting for the Fabric notebook bridge to start (usually under a minute).',
       };
+      if (result.running && Date.now() - new Date(run.osmosStartedAt ?? run.createdAt).getTime() >= 2 * 60 * 60_000) {
+        result = { ...result, running: false, monitorPaused: true, message: 'Monitoring paused after two hours. The task may still be running. Open it in Fabric for current status.' };
+      }
+      if (result.monitorPaused) {
+        if (Date.now() - new Date(run.osmosStartedAt ?? run.createdAt).getTime() < 2 * 60 * 60_000) {
+          const resumed = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, target, run.osmosTaskId);
+          if (!resumed.ok) return resumed;
+          await data.AgentRun.update({ id: run.id }, { osmosJobLocation: resumed.jobLocation, updatedAt: new Date() });
+          result = { ...resumed, message: 'Resuming status monitoring for the existing Osmos task; no new task was created.' };
+        } else result = { ...result, running: false, message: 'Notebook monitoring has ended. Open the existing task in Fabric for current status.' };
+      }
     } catch (error) {
       return { ok: false, taskId: run.osmosTaskId, message: str((error as Error).message, 1000) };
     }

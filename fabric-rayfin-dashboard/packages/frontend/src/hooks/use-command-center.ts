@@ -1,17 +1,16 @@
 import type {
   IdentityView,
-  RunEventRecord,
   RunEventView,
   RunView,
   WorkspaceStatusView,
 } from '@rayfin-app/shared';
+import { isRunTerminal, pollDelay } from '@rayfin-app/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getRayfinClient } from '@/lib/rayfin-client';
 
 export const APP_WORKSPACE_ID = '8b835744-f17d-44ef-b43a-3fe3d51c8e35';
 const ACTIVE_CONVERSATION_KEY = 'command-center.activeConversation';
-const RUN_POLL_MS = 4000;
 const FEED_POLL_MS = 5000;
 const WORKSPACE_POLL_MS = 60000;
 const FEED_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -22,7 +21,7 @@ export function errorMessage(error: unknown): string {
 }
 
 function isTerminal(run: RunView): boolean {
-  return run.status === 'completed' || run.status === 'failed';
+  return isRunTerminal(run.status);
 }
 
 export interface ConversationSummary {
@@ -83,6 +82,8 @@ export function useConversation(onChange: () => void) {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pollingPaused, setPollingPaused] = useState(false);
+  const [retryGeneration, setRetryGeneration] = useState(0);
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -93,6 +94,8 @@ export function useConversation(onChange: () => void) {
     else localStorage.removeItem(ACTIVE_CONVERSATION_KEY);
     setConversationId(id);
     setError(null);
+    setPollingPaused(false);
+    setRuns([]);
     if (!id) setRuns([]);
   }, []);
 
@@ -128,27 +131,38 @@ export function useConversation(onChange: () => void) {
     if (!activeKey) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    let failures = 0;
     const tick = async () => {
       try {
         const client = await getRayfinClient();
         const next = await client.functions.pollRun.invoke({ runKey: activeKey });
         if (cancelled) return;
         setRuns((current) => current.map((run) => (run.runKey === next.runKey ? next : run)));
+        setError(next.error ?? null);
+        failures = next.error && !isTerminal(next) ? failures + 1 : 0;
         if (isTerminal(next)) {
+          setPollingPaused(false);
           onChangeRef.current();
           return;
         }
       } catch (err) {
-        if (!cancelled) setError(errorMessage(err));
+        if (cancelled) return;
+        setError(errorMessage(err));
+        failures++;
       }
-      if (!cancelled) timer = setTimeout(() => void tick(), RUN_POLL_MS);
+      if (failures >= 5) {
+        setPollingPaused(true);
+        return;
+      }
+      if (!cancelled) timer = setTimeout(() => void tick(), pollDelay(attempt++));
     };
     timer = setTimeout(() => void tick(), 1500);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeKey]);
+  }, [activeKey, retryGeneration]);
 
   const send = useCallback(
     async (prompt: string) => {
@@ -179,7 +193,12 @@ export function useConversation(onChange: () => void) {
     [conversationId],
   );
 
-  return { conversationId, runs, loading, sending, error, select, send, busy: Boolean(active) };
+  const resumePolling = useCallback(() => {
+    setPollingPaused(false);
+    setError(null);
+    setRetryGeneration((value) => value + 1);
+  }, []);
+  return { conversationId, runs, loading, sending, error, select, send, pollingPaused, resumePolling, busy: Boolean(active) && !pollingPaused };
 }
 
 /** Recent specialist activity across all of the caller's runs. */
@@ -194,41 +213,18 @@ export function useLiveFeed() {
     const tick = async () => {
       try {
         const client = await getRayfinClient();
-        const rows: RunEventRecord[] = await client.data.RunEvent.select([
-          'id',
-          'runKey',
-          'eventKey',
-          'agent',
-          'status',
-          'task',
-          'summary',
-          'createdAt',
-          'updatedAt',
-          'owner_id',
-        ])
-          .orderBy({ updatedAt: 'desc' })
-          .first(60)
-          .execute();
+        const rows = await client.functions.getLiveFeed.invoke();
         if (cancelled) return;
         const since = Date.now() - FEED_WINDOW_MS;
         setEvents(
-          rows
-            .filter((row) => new Date(iso(row.updatedAt)).getTime() >= since)
-            .map((row) => ({
-              agent: row.agent,
-              status:
-                row.status === 'working' || row.status === 'completed' || row.status === 'failed'
-                  ? row.status
-                  : 'idle',
-              task: row.task,
-              summary: row.summary ?? undefined,
-              createdAt: iso(row.updatedAt) || iso(row.createdAt),
-              runKey: row.runKey,
-            })),
+          rows.filter((row) => new Date(row.createdAt).getTime() >= since),
         );
         setError(null);
       } catch (err) {
-        if (!cancelled) setError(errorMessage(err));
+        if (!cancelled) {
+          setError(errorMessage(err));
+          setEvents((current) => current.filter((event) => event.status !== 'working'));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -244,31 +240,47 @@ export function useLiveFeed() {
   return { events, loading, error };
 }
 
-export function useWorkspaceStatus() {
+export function useWorkspaceStatus(workspaceId = APP_WORKSPACE_ID) {
   const [status, setStatus] = useState<WorkspaceStatusView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
+  const operation = useRef('');
+  const activeJobs = useRef(false);
 
   const refresh = useCallback(async () => {
+    const requestGeneration = generation.current;
     setLoading(true);
     try {
       const client = await getRayfinClient();
-      const result = await client.functions.getWorkspaceStatus.invoke({ workspaceId: APP_WORKSPACE_ID });
+      const result = await client.functions.getWorkspaceStatus.invoke({ workspaceId, gitOperationId: operation.current });
+      if (generation.current !== requestGeneration) return;
+      operation.current = result.git?.operationId ?? '';
+      activeJobs.current = result.jobs.some((job) => ['inprogress', 'notstarted'].includes(job.status.toLowerCase()));
       setStatus(result);
       setError(result.ok ? null : (result.message ?? 'Workspace status is unavailable.'));
     } catch (err) {
-      setError(errorMessage(err));
+      if (generation.current === requestGeneration) setError(errorMessage(err));
     } finally {
-      setLoading(false);
+      if (generation.current === requestGeneration) setLoading(false);
     }
-  }, []);
+  }, [workspaceId]);
 
   useEffect(() => {
-    const first = setTimeout(() => void refresh(), 0);
-    const timer = setInterval(() => void refresh(), WORKSPACE_POLL_MS);
+    const version = ++generation.current;
+    operation.current = '';
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      await refresh();
+      if (!cancelled) timer = setTimeout(() => void tick(), operation.current ? 5000 : activeJobs.current ? 10000 : WORKSPACE_POLL_MS);
+    };
+    const first = setTimeout(() => { setStatus(null); void tick(); }, 0);
     return () => {
       clearTimeout(first);
-      clearInterval(timer);
+      cancelled = true;
+      generation.current = version + 1;
+      clearTimeout(timer);
     };
   }, [refresh]);
 

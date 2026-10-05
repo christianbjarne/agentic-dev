@@ -4,10 +4,9 @@ import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
-const RECENT_MS = 15 * 60 * 1000;
-
 export const AGENT_LABELS: Record<string, string> = {
   [ORCHESTRATOR_ID]: 'Fabric orchestrator',
+  osmos_task: 'Project Osmos task',
   ...Object.fromEntries(SPECIALISTS.map((agent) => [agent.id, agent.label])),
 };
 
@@ -15,15 +14,19 @@ export function agentLabel(id: string): string {
   return AGENT_LABELS[id] ?? id.replace(/_/g, ' ');
 }
 
-/** Latest status per agent: working wins; finished states fade to idle after 15 minutes. */
+/** Resolve each run first, so an old working event cannot mask its terminal outcome. */
 export function agentStatuses(events: RunEventView[]): Record<string, { status: AgentStatus; task?: string }> {
-  const result: Record<string, { status: AgentStatus; task?: string; at: number }> = {};
-  const now = Date.now();
+  const latest = new Map<string, RunEventView>();
   for (const event of events) {
+    if (event.agent === 'release_intelligence' || event.agent === 'osmos_task') continue;
+    const key = `${event.runKey}:${event.agent}`;
+    const previous = latest.get(key);
+    if (!previous || new Date(event.createdAt).getTime() >= new Date(previous.createdAt).getTime()) latest.set(key, event);
+  }
+  const result: Record<string, { status: AgentStatus; task?: string; at: number }> = {};
+  for (const event of latest.values()) {
     const at = new Date(event.createdAt).getTime();
     const current = result[event.agent];
-    const fresh = event.status === 'working' || now - at < RECENT_MS;
-    if (!fresh) continue;
     const replaces =
       !current ||
       (event.status === 'working' && current.status !== 'working') ||
@@ -58,6 +61,14 @@ export const STATUS_STYLES: Record<AgentStatus, { label: string; chip: string; r
     ring: 'border-destructive',
     icon: <XCircle aria-hidden className="icon-size-100" />,
   },
+  cancelled: {
+    label: 'Cancelled', chip: 'bg-muted text-muted-foreground', ring: 'border-border',
+    icon: <XCircle aria-hidden className="icon-size-100" />,
+  },
+  incomplete: {
+    label: 'Incomplete', chip: 'bg-muted text-muted-foreground', ring: 'border-border',
+    icon: <CircleDashed aria-hidden className="icon-size-100" />,
+  },
 };
 
 export function StatusChip({ status }: { status: AgentStatus }) {
@@ -83,8 +94,11 @@ export function StatusChip({ status }: { status: AgentStatus }) {
 export function AgentGraph({ events }: { events: RunEventView[] }) {
   const statuses = agentStatuses(events);
   const center = { x: 50, y: 50 };
-  const nodes = SPECIALISTS.map((agent, index) => {
-    const angle = (index / SPECIALISTS.length) * Math.PI * 2 - Math.PI / 2;
+  const observed = [...new Set(events.map((event) => event.agent))].filter((id) =>
+    id !== ORCHESTRATOR_ID && id !== 'release_intelligence' && id !== 'osmos_task' && !SPECIALISTS.some((agent) => agent.id === id));
+  const roster = [...SPECIALISTS, ...observed.map((id) => ({ id, label: agentLabel(id), short: id.slice(0, 2).toUpperCase() }))];
+  const nodes = roster.map((agent, index) => {
+    const angle = (index / roster.length) * Math.PI * 2 - Math.PI / 2;
     return { ...agent, x: center.x + Math.cos(angle) * 39, y: center.y + Math.sin(angle) * 39 };
   });
   const orchestrator = statuses[ORCHESTRATOR_ID]?.status ?? 'idle';
@@ -95,7 +109,7 @@ export function AgentGraph({ events }: { events: RunEventView[] }) {
       <p className="sr-only" aria-live="polite">
         {activeCount ? `${activeCount} agent(s) working.` : 'No agents are working.'}
       </p>
-      <div className="relative mx-auto aspect-square w-full max-w-[520px]">
+      <div className="relative mx-auto aspect-square w-full max-w-[340px]">
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" aria-hidden>
           <circle cx="50" cy="50" r="39" className="fill-none stroke-border" strokeWidth="0.3" strokeDasharray="1 1.5" />
           {nodes.map((node) => {

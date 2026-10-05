@@ -21,9 +21,9 @@ export function Panel({
   return (
     <section
       aria-labelledby={`${id}-title`}
-      className={cn('flex min-w-0 flex-col rounded-2xl border border-border bg-card shadow-sm', className)}
+      className={cn('flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm', className)}
     >
-      <header className="flex items-center justify-between gap-300 border-b border-border px-500 py-300">
+      <header className="flex shrink-0 items-center justify-between gap-300 border-b border-border px-400 py-200">
         <h2
           id={`${id}-title`}
           className="flex items-center gap-200 font-semibold text-[length:var(--text-400)] leading-400 text-card-foreground"
@@ -33,7 +33,7 @@ export function Panel({
         </h2>
         {actions && <div className="flex items-center gap-200">{actions}</div>}
       </header>
-      <div className="flex min-h-0 flex-1 flex-col p-500">{children}</div>
+      <div className="flex min-h-0 flex-1 flex-col p-300">{children}</div>
     </section>
   );
 }

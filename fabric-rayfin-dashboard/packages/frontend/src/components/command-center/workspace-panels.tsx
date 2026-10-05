@@ -1,5 +1,10 @@
-import type { WorkspaceStatusView } from '@rayfin-app/shared';
+import type { WorkspaceStatusView, WorkspaceBranchChoice } from '@rayfin-app/shared';
 import { Briefcase, ExternalLink, GitBranch, RefreshCw } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { APP_WORKSPACE_ID, useWorkspaceStatus } from '@/hooks/use-command-center';
+import { useRead } from '@/hooks/use-read';
+import { getRayfinClient } from '@/lib/rayfin-client';
+import { SELECT_CLASS } from './repository-panel';
 
 import { EmptyState, ErrorNote, IconButton, Panel, SkeletonRows } from './panel';
 
@@ -131,7 +136,7 @@ export function WorkspaceJobsPanel({
 export function GitPanel({ status, loading }: { status: WorkspaceStatusView | null; loading: boolean }) {
   const git = status?.git;
   return (
-    <Panel id="git" title="Repository" icon={<GitBranch aria-hidden className="icon-size-300" />}>
+    <Panel id="git" title="Fabric Git" icon={<GitBranch aria-hidden className="icon-size-300" />}>
       {loading && !status ? (
         <SkeletonRows rows={2} />
       ) : !git?.connected ? (
@@ -148,8 +153,109 @@ export function GitPanel({ status, loading }: { status: WorkspaceStatusView | nu
           <dd className="break-all font-[family-name:var(--font-monospace)]">{git.branch}</dd>
           <dt className="text-muted-foreground">Folder</dt>
           <dd className="break-all">{git.directory || '/'}</dd>
+          <dt className="text-muted-foreground">Uncommitted items</dt>
+          <dd>{git.changes ?? 'Status unavailable'}</dd>
+          <dt className="text-muted-foreground">Workspace head</dt>
+          <dd className="break-all">{git.workspaceHead ?? '-'}</dd>
+          <dt className="text-muted-foreground">Remote head</dt>
+          <dd className="break-all">{git.remoteCommitHash ?? '-'}</dd>
+          {git.message && <><dt className="text-muted-foreground">Status</dt><dd>{git.message}</dd></>}
+          {git.changeDetails?.map((change, index) => <div key={`${change.name}:${index}`} className="col-span-2 border-t border-border pt-200">
+            {change.name}: workspace {change.workspaceChange || 'None'}, remote {change.remoteChange || 'None'}
+          </div>)}
         </dl>
       )}
+    </Panel>
+  );
+}
+
+export function WorkspaceLivePanel() {
+  const [workspaceId, setWorkspaceId] = useState(() => localStorage.getItem('command-center.workspace') ?? APP_WORKSPACE_ID);
+  const readWorkspaces = useCallback(async () => (await getRayfinClient()).functions.getWorkspaces.invoke(), []);
+  const choices = useRead('fabric-workspaces', readWorkspaces);
+  const workspace = useWorkspaceStatus(workspaceId);
+  const connected = workspace.status?.git?.connected === true;
+  const [fullDiscovery, setFullDiscovery] = useState(false);
+  const [discovered, setDiscovered] = useState<{ workspaceId: string; choices: WorkspaceBranchChoice[]; warnings: string[] }>({
+    workspaceId: '', choices: [], warnings: [],
+  });
+  const readBranches = useCallback(async (signal: AbortSignal) => {
+    const client = await getRayfinClient();
+    const result = new Map<string, WorkspaceBranchChoice>();
+    const warnings = new Set<string>();
+    const deadline = Date.now() + 5 * 60_000;
+    let cursor: number | null = 0;
+    while (cursor !== null) {
+      if (signal.aborted) throw new Error('Branch-workspace discovery was cancelled.');
+      if (Date.now() > deadline) throw new Error('Branch discovery paused after five minutes. Fabric may be throttling requests; refresh to retry.');
+      const page = await client.functions.getWorkspaceBranches.invoke({ workspaceId, cursor, discover: fullDiscovery });
+      if (signal.aborted) throw new Error('Branch-workspace discovery was cancelled.');
+      for (const choice of page.choices) result.set(choice.id, choice);
+      for (const warning of page.warnings) warnings.add(warning);
+      setDiscovered({ workspaceId, choices: [...result.values()], warnings: [...warnings] });
+      cursor = page.nextCursor;
+      const retryAfter = page.retryAfterSeconds;
+      if (retryAfter) await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+    }
+    return { choices: [...result.values()], warnings: [...warnings] };
+  }, [workspaceId, fullDiscovery]);
+  const branches = useRead(connected ? workspaceId : '', readBranches);
+  const branchChoices = branches.data?.choices ?? (discovered.workspaceId === workspaceId ? discovered.choices : []);
+  const branchWarnings = branches.data?.warnings ?? (discovered.workspaceId === workspaceId ? discovered.warnings : []);
+  const selectWorkspace = (id: string) => { setFullDiscovery(false); setWorkspaceId(id); localStorage.setItem('command-center.workspace', id); };
+  return (
+    <Panel id="workspace" title="Fabric workspace live" icon={<Briefcase aria-hidden className="icon-size-300" />}
+      actions={<IconButton label="Refresh Fabric workspace" onClick={() => { void workspace.refresh(); choices.refresh(); branches.refresh(); }} disabled={workspace.loading}>
+        <RefreshCw aria-hidden className="icon-size-200" />
+      </IconButton>}>
+      <div className="flex min-h-0 flex-1 flex-col gap-300">
+        <div className="grid shrink-0 grid-cols-2 gap-200">
+          <label className="min-w-0 text-[length:var(--text-200)]">Workspace
+            <select aria-label="Fabric workspace" className={SELECT_CLASS} value={workspaceId} onChange={(event) => selectWorkspace(event.target.value)}
+              disabled={choices.loading || !choices.data?.length}>
+              {!choices.data?.some((item) => item.id === workspaceId) && <option value={workspaceId}>Current workspace</option>}
+              {choices.data?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0 text-[length:var(--text-200)]">Git branch workspace
+            <select aria-label="Fabric Git branch" className={SELECT_CLASS} value={workspaceId} disabled={!connected || (branches.loading && !branchChoices.length)}
+              onChange={(event) => selectWorkspace(event.target.value)}>
+              {!branchChoices.some((item) => item.id === workspaceId) && <option value={workspaceId}>{branches.loading ? `${workspace.status?.git?.branch ?? ''} · Discovering branch workspaces...` : workspace.status?.git?.branch ?? (connected ? 'No branch workspaces' : 'Not connected')}</option>}
+              {branchChoices.map((item) => <option key={item.id} value={item.id}>{item.branch} · {item.name}</option>)}
+            </select>
+          </label>
+        </div>
+        {choices.error && <ErrorNote message={choices.error} />}
+        {branches.error && <ErrorNote message={branches.error} />}
+        {connected && <button type="button" disabled={branches.loading}
+          className="shrink-0 text-left text-[length:var(--text-200)] text-brand-foreground underline disabled:opacity-50"
+          onClick={() => { if (fullDiscovery) branches.refresh(); else setFullDiscovery(true); }}>
+          Discover additional branch workspaces
+        </button>}
+        {branches.loading && !!branchChoices.length && <p role="status" className="text-[length:var(--text-200)] text-muted-foreground">Discovering additional branch workspaces. Known branches are already selectable.</p>}
+        {!!branchWarnings.length && <p role="status" className="text-[length:var(--text-200)] text-muted-foreground" title={branchWarnings.join('\n')}>
+          Branch list is partial: Git metadata was unavailable for {branchWarnings.length} workspace(s). {branchWarnings[0]}
+        </p>}
+        <div className="min-h-0 flex-1 space-y-300 overflow-y-auto overscroll-contain">
+          <p className="text-[length:var(--text-200)] text-muted-foreground">Live Fabric items, not Git snapshots. Branch selection opens an existing workspace connected to that branch; it never reconnects or overwrites items.</p>
+          {workspace.status?.warnings?.map((warning) => <p key={warning} role="status" className="text-[length:var(--text-200)] text-muted-foreground">{warning}</p>)}
+          {workspace.status?.ok && <section aria-label="Workspace item inventory" className="rounded-xl border border-border p-300">
+            <h3 className="font-semibold text-[length:var(--text-300)]">Item inventory</h3>
+            {workspace.status.itemCounts.map((group) => <details key={group.type} className="border-b border-border py-200">
+              <summary className="cursor-pointer text-[length:var(--text-200)]">{group.type} ({group.count})</summary>
+              <ul className="pl-300 text-[length:var(--text-200)]">
+                {workspace.status?.items.filter((item) => item.type === group.type).map((item) => <li key={item.id} className="py-100">
+                  <a className="break-all text-brand-foreground underline" target="_blank" rel="noreferrer"
+                    href={`https://app.fabric.microsoft.com/groups/${workspaceId}/list?experience=fabric-developer&itemId=${item.id}`}>{item.name}</a>
+                  <span className="block text-muted-foreground">{item.id}</span>
+                </li>)}
+              </ul>
+            </details>)}
+          </section>}
+          <GitPanel status={workspace.status} loading={workspace.loading} />
+          <WorkspaceJobsPanel status={workspace.status} loading={workspace.loading} error={workspace.error} onRefresh={() => void workspace.refresh()} />
+        </div>
+      </div>
     </Panel>
   );
 }

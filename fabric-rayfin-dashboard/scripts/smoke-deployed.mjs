@@ -58,7 +58,7 @@ const identity = await time('whoAmI', () => client.functions.whoAmI.invoke());
 log('identity', identity);
 
 const status = await time('getWorkspaceStatus', () =>
-  client.functions.getWorkspaceStatus.invoke({ workspaceId: target.fabricWorkspaceId }),
+  client.functions.getWorkspaceStatus.invoke({ workspaceId: option('--workspace-id') ?? target.fabricWorkspaceId, gitOperationId: '' }),
 );
 log('workspace', {
   ok: status.ok,
@@ -68,6 +68,57 @@ log('workspace', {
   jobs: status.jobs?.slice(0, 8),
   git: status.git,
 });
+
+if (flag('--branches')) {
+  const workspaceId = option('--workspace-id') ?? target.fabricWorkspaceId;
+  const choices = [];
+  const deadline = Date.now() + 5 * 60_000;
+  let cursor = 0;
+  do {
+    if (Date.now() > deadline) throw new Error('Branch discovery exceeded its monitoring deadline.');
+    const page = await time(`getWorkspaceBranches cursor=${cursor}`, () =>
+      client.functions.getWorkspaceBranches.invoke({ workspaceId, cursor, discover: true }),
+    );
+    choices.push(...page.choices);
+    if (page.warnings.length) log('branch discovery warnings', page.warnings);
+    cursor = page.nextCursor;
+    if (page.retryAfterSeconds) await new Promise((resolve) => setTimeout(resolve, page.retryAfterSeconds * 1000));
+  } while (cursor !== null);
+  log('existing branch workspaces', choices);
+  const alternate = choices.find((choice) => choice.id !== workspaceId);
+  if (alternate) {
+    const live = await time('alternate branch workspace', () =>
+      client.functions.getWorkspaceStatus.invoke({ workspaceId: alternate.id, gitOperationId: '' }),
+    );
+    log('branch switch evidence', { workspaceId: live.workspaceId, branch: live.git?.branch, items: live.items.length });
+    if (live.workspaceId !== alternate.id || live.git?.branch !== alternate.branch) throw new Error('Branch workspace did not match the selected branch.');
+  }
+}
+
+if (flag('--catalog')) {
+  const workspaces = await time('getWorkspaces', () => client.functions.getWorkspaces.invoke());
+  log('workspace choices', workspaces);
+  const alternate = workspaces.find((item) => item.id !== target.fabricWorkspaceId);
+  if (alternate) {
+    const live = await time('alternate workspace selection', () => client.functions.getWorkspaceStatus.invoke({ workspaceId: alternate.id, gitOperationId: '' }));
+    log('alternate workspace', { id: live.workspaceId, name: live.workspaceName, items: live.items?.length, git: live.git, warnings: live.warnings });
+  }
+  const repos = await time('getGitHubRepositories', () => client.functions.getGitHubRepositories.invoke());
+  console.log(`Accessible GitHub repositories: ${repos.length}`);
+  for (const repo of repos.filter((item) => ['christianbjarne/agentic-dev', 'christianbjarne/fabric-foundry-agents'].includes(item.name))) {
+    const branches = await time(`branches ${repo.name}`, () => client.functions.getGitHubBranches.invoke({ repository: repo.name }));
+    console.log(`${repo.name}: ${branches.length} branches`);
+    for (const branch of [repo.defaultBranch, branches.find((name) => name !== repo.defaultBranch)].filter(Boolean)) {
+      const view = await time(`branch ${repo.name}:${branch}`, () => client.functions.getGitHubBranch.invoke({ repository: repo.name, branch }));
+      log('branch commits', { repo: repo.name, branch, count: view.commits.length, first: view.commits[0], pulls: view.pulls });
+      if (view.commits[0]) {
+        const files = await time('commit files', () => client.functions.getGitHubCommit.invoke({ repository: repo.name, sha: view.commits[0].sha }));
+        log('commit file evidence', { files: files.length, patches: files.filter((file) => file.patch).length, names: files.slice(0, 6).map((file) => file.filename) });
+      }
+    }
+  }
+  log('live feed', (await time('getLiveFeed', () => client.functions.getLiveFeed.invoke())).map((event) => ({ agent: event.agent, status: event.status, runKey: event.runKey })));
+}
 
 const osmosRun = option('--osmos-run');
 if (osmosRun) {
@@ -90,7 +141,7 @@ if (!flag('--skip-run')) {
   const conversation = { id: run.conversationId };
   console.log(`runKey=${run.runKey} conversationId=${conversation.id}`);
   const deadline = Date.now() + 12 * 60_000;
-  while (run.status !== 'completed' && run.status !== 'failed' && Date.now() < deadline) {
+  while (!['completed', 'failed', 'cancelled', 'incomplete'].includes(run.status) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 8000));
     run = await client.functions.pollRun.invoke({ runKey: run.runKey });
     console.log(`  status=${run.status} events=${run.events.length}`);
@@ -114,6 +165,8 @@ if (!flag('--skip-run')) {
     client.functions.getConversation.invoke({ conversationId: conversation.id }),
   );
   log('history', history.map((item) => ({ runKey: item.runKey, status: item.status, events: item.events.length })));
+  if (!['completed', 'failed', 'cancelled', 'incomplete'].includes(run.status)) throw new Error('Run did not reach a terminal state within the smoke deadline.');
+  if (run.events.some((event) => event.status === 'working' && event.agent !== 'osmos_task')) throw new Error('A terminal run still has a working Foundry agent event.');
   const feed = await time('RunEvent feed', () =>
     client.data.RunEvent.select(['agent', 'status', 'runKey', 'createdAt']).orderBy({ createdAt: 'desc' }).first(10).execute(),
   );

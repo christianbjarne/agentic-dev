@@ -20,6 +20,8 @@ export class AgentRun {
   @text({ optional: true, max: 4000 }) handoff?: string;
   @text({ optional: true, max: 64 }) osmosTaskId?: string;
   @text({ optional: true, max: 32 }) osmosStatus?: string;
+  @text({ optional: true, max: 1000 }) osmosJobLocation?: string;
+  @date({ optional: true }) osmosStartedAt?: Date;
   @date() createdAt!: Date;
   @date() updatedAt!: Date;
   @text({ max: 200 }) owner_id!: string;

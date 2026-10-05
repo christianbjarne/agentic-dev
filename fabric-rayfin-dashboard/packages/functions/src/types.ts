@@ -17,21 +17,49 @@
  */
 
 export type AppFunctionsSchema = {
+  getLiveFeed: {
+    input: Record<string, never>;
+    output: { agent: string; status: 'idle' | 'working' | 'completed' | 'failed' | 'cancelled' | 'incomplete'; task: string; summary?: undefined | string; createdAt: string; runKey: string }[];
+  };
   startRun: {
     input: { prompt: string; conversationId: string };
-    output: { runKey: string; conversationId: string; status: 'queued' | 'working' | 'completed' | 'failed'; prompt: string; response?: undefined | string; error?: undefined | string; events: { agent: string; status: 'working' | 'completed' | 'failed' | 'idle'; task: string; summary?: undefined | string; createdAt: string; runKey: string }[]; osmos?: undefined | { workspaceId: string; lakehouseId: string; displayName: string; instruction: string }; osmosTask?: undefined | { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true }; createdAt: string; updatedAt: string };
+    output: { runKey: string; conversationId: string; status: 'working' | 'completed' | 'failed' | 'cancelled' | 'incomplete' | 'queued'; responseId?: undefined | string; prompt: string; response?: undefined | string; error?: undefined | string; events: { agent: string; status: 'idle' | 'working' | 'completed' | 'failed' | 'cancelled' | 'incomplete'; task: string; summary?: undefined | string; createdAt: string; runKey: string }[]; osmos?: undefined | { workspaceId: string; lakehouseId: string; displayName: string; instruction: string }; osmosTask?: undefined | { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true; jobLocation?: undefined | string; monitorPaused?: undefined | false | true }; createdAt: string; updatedAt: string };
   };
   pollRun: {
     input: { runKey: string };
-    output: { runKey: string; conversationId: string; status: 'queued' | 'working' | 'completed' | 'failed'; prompt: string; response?: undefined | string; error?: undefined | string; events: { agent: string; status: 'working' | 'completed' | 'failed' | 'idle'; task: string; summary?: undefined | string; createdAt: string; runKey: string }[]; osmos?: undefined | { workspaceId: string; lakehouseId: string; displayName: string; instruction: string }; osmosTask?: undefined | { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true }; createdAt: string; updatedAt: string };
+    output: { runKey: string; conversationId: string; status: 'working' | 'completed' | 'failed' | 'cancelled' | 'incomplete' | 'queued'; responseId?: undefined | string; prompt: string; response?: undefined | string; error?: undefined | string; events: { agent: string; status: 'idle' | 'working' | 'completed' | 'failed' | 'cancelled' | 'incomplete'; task: string; summary?: undefined | string; createdAt: string; runKey: string }[]; osmos?: undefined | { workspaceId: string; lakehouseId: string; displayName: string; instruction: string }; osmosTask?: undefined | { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true; jobLocation?: undefined | string; monitorPaused?: undefined | false | true }; createdAt: string; updatedAt: string };
   };
   getConversation: {
     input: { conversationId: string };
-    output: { runKey: string; conversationId: string; status: 'queued' | 'working' | 'completed' | 'failed'; prompt: string; response?: undefined | string; error?: undefined | string; events: { agent: string; status: 'working' | 'completed' | 'failed' | 'idle'; task: string; summary?: undefined | string; createdAt: string; runKey: string }[]; osmos?: undefined | { workspaceId: string; lakehouseId: string; displayName: string; instruction: string }; osmosTask?: undefined | { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true }; createdAt: string; updatedAt: string }[];
+    output: { runKey: string; conversationId: string; status: 'working' | 'completed' | 'failed' | 'cancelled' | 'incomplete' | 'queued'; responseId?: undefined | string; prompt: string; response?: undefined | string; error?: undefined | string; events: { agent: string; status: 'idle' | 'working' | 'completed' | 'failed' | 'cancelled' | 'incomplete'; task: string; summary?: undefined | string; createdAt: string; runKey: string }[]; osmos?: undefined | { workspaceId: string; lakehouseId: string; displayName: string; instruction: string }; osmosTask?: undefined | { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true; jobLocation?: undefined | string; monitorPaused?: undefined | false | true }; createdAt: string; updatedAt: string }[];
   };
   getWorkspaceStatus: {
-    input: { workspaceId: string };
-    output: { ok: boolean; message?: undefined | string; workspaceId: string; workspaceName?: undefined | string; capacityRegion?: undefined | string; itemCounts: { type: string; count: number }[]; jobs: { itemId: string; itemName: string; itemType: string; jobId: string; jobType: string; invokeType: string; status: string; startTimeUtc?: undefined | string; endTimeUtc?: undefined | string; failureReason?: undefined | string }[]; git?: undefined | { connected: boolean; provider?: undefined | string; repository?: undefined | string; branch?: undefined | string; directory?: undefined | string; changes?: undefined | number; message?: undefined | string }; checkedAt: string };
+    input: { workspaceId: string; gitOperationId: string };
+    output: { ok: boolean; message?: undefined | string; workspaceId: string; workspaceName?: undefined | string; capacityRegion?: undefined | string; itemCounts: { type: string; count: number }[]; items: { id: string; name: string; type: string }[]; jobs: { itemId: string; itemName: string; itemType: string; jobId: string; jobType: string; invokeType: string; status: string; startTimeUtc?: undefined | string; endTimeUtc?: undefined | string; failureReason?: undefined | string }[]; warnings?: undefined | string[]; git?: undefined | { connected: boolean; provider?: undefined | string; repository?: undefined | string; branch?: undefined | string; directory?: undefined | string; changes?: undefined | number; workspaceHead?: undefined | string; remoteCommitHash?: undefined | string; operationId?: undefined | string; changeDetails?: undefined | { name: string; workspaceChange: string; remoteChange: string }[]; message?: undefined | string }; checkedAt: string };
+  };
+  getWorkspaceBranches: {
+    input: { workspaceId: string; cursor: number; discover: boolean };
+    output: { choices: { branch: string; id: string; name: string }[]; warnings: string[]; nextCursor: null | number; retryAfterSeconds?: undefined | number };
+  };
+  getWorkspaces: {
+    input: Record<string, never>;
+    output: { id: string; name: string }[];
+  };
+  getGitHubRepositories: {
+    input: Record<string, never>;
+    output: { name: string; url: string; defaultBranch: string }[];
+  };
+  getGitHubBranches: {
+    input: { repository: string };
+    output: string[];
+  };
+  getGitHubBranch: {
+    input: { repository: string; branch: string };
+    output: { commits: { sha: string; url: string; message: string; author: string; date: string }[]; pulls: { number: number; title: string; url: string; state: string }[] };
+  };
+  getGitHubCommit: {
+    input: { repository: string; sha: string };
+    output: { filename: string; status: string; additions: number; deletions: number; patch?: undefined | string; url?: undefined | string }[];
   };
   whoAmI: {
     input: Record<string, never>;
@@ -39,10 +67,10 @@ export type AppFunctionsSchema = {
   };
   createOsmosTask: {
     input: { runKey: string };
-    output: { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true };
+    output: { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true; jobLocation?: undefined | string; monitorPaused?: undefined | false | true };
   };
   getOsmosTask: {
     input: { runKey: string };
-    output: { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true };
+    output: { ok: boolean; message?: undefined | string; taskId?: undefined | string; status?: undefined | string; taskPage?: undefined | string; running?: undefined | false | true; jobLocation?: undefined | string; monitorPaused?: undefined | false | true };
   };
 };

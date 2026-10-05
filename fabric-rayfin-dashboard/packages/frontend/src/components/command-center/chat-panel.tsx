@@ -1,4 +1,5 @@
 import type { OsmosTaskView, RunView } from '@rayfin-app/shared';
+import { isRunTerminal, isTaskTerminal, pollDelay } from '@rayfin-app/shared';
 import { ExternalLink, Loader2, MessageSquare, Send, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 
@@ -22,6 +23,8 @@ export function ChatPanel({
   busy,
   error,
   canCreateOsmos,
+  pollingPaused = false,
+  onResume,
   onSend,
 }: {
   runs: RunView[];
@@ -30,14 +33,18 @@ export function ChatPanel({
   busy: boolean;
   error: string | null;
   canCreateOsmos: boolean | null;
+  pollingPaused?: boolean;
+  onResume?: () => void;
   onSend: (prompt: string) => Promise<boolean>;
 }) {
   const [prompt, setPrompt] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const lastUpdate = runs.at(-1)?.updatedAt;
 
   useEffect(() => {
-    endRef.current?.scrollIntoView?.({ block: 'end' });
+    const panel = scrollRef.current;
+    if (panel) panel.scrollTop = panel.scrollHeight;
   }, [runs.length, lastUpdate]);
 
   const submit = async (event?: FormEvent) => {
@@ -56,7 +63,7 @@ export function ChatPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-300">
-      <div className="flex min-h-[320px] flex-1 flex-col gap-400 overflow-y-auto pr-100" aria-live="polite">
+      <div ref={scrollRef} data-testid="chat-scroll" className="flex min-h-0 flex-1 flex-col gap-400 overflow-y-auto overscroll-contain pr-100" aria-live="polite">
         {loading && !runs.length ? (
           <SkeletonRows rows={3} />
         ) : !runs.length ? (
@@ -64,7 +71,7 @@ export function ChatPanel({
             The orchestrator plans the work and delegates to Fabric specialists. Try one of these:
           </EmptyState>
         ) : (
-          runs.map((run) => <RunMessages key={run.runKey} run={run} canCreateOsmos={canCreateOsmos} />)
+          runs.map((run) => <RunMessages key={run.runKey} run={run} canCreateOsmos={canCreateOsmos} pollingPaused={pollingPaused} />)
         )}
         {!runs.length && !loading && (
           <ul className="flex flex-col gap-200">
@@ -85,8 +92,9 @@ export function ChatPanel({
       </div>
 
       {error && <ErrorNote message={error} />}
+      {pollingPaused && <Button variant="secondary" onClick={onResume}>Resume run monitoring</Button>}
 
-      <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-200">
+      <form onSubmit={(event) => void submit(event)} className="flex shrink-0 flex-col gap-200">
         <label htmlFor="prompt" className="sr-only">
           Message the Fabric orchestrator
         </label>
@@ -98,7 +106,7 @@ export function ChatPanel({
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder="Ask the Fabric orchestrator... (Enter to send, Shift+Enter for a new line)"
-          className="w-full resize-y rounded-xl border border-input bg-background px-300 py-200 text-[length:var(--text-300)] leading-300 focus-visible:outline-2 focus-visible:outline-ring"
+          className="w-full resize-none rounded-xl border border-input bg-background px-300 py-200 text-[length:var(--text-300)] leading-300 focus-visible:outline-2 focus-visible:outline-ring"
         />
         <div className="flex items-center justify-between gap-300">
           <span className="text-[length:var(--text-200)] text-muted-foreground">
@@ -118,9 +126,9 @@ export function ChatPanel({
   );
 }
 
-function RunMessages({ run, canCreateOsmos }: { run: RunView; canCreateOsmos: boolean | null }) {
-  const specialists = run.events.filter((event) => event.agent !== 'fabric_orchestrator');
-  const done = run.status === 'completed' || run.status === 'failed';
+function RunMessages({ run, canCreateOsmos, pollingPaused }: { run: RunView; canCreateOsmos: boolean | null; pollingPaused: boolean }) {
+  const specialists = run.events.filter((event) => event.agent !== 'fabric_orchestrator' && event.agent !== 'osmos_task');
+  const done = isRunTerminal(run.status);
   return (
     <article className="flex flex-col gap-200" aria-label="Conversation turn">
       <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-primary px-400 py-300 text-[length:var(--text-300)] text-primary-foreground">
@@ -129,7 +137,8 @@ function RunMessages({ run, canCreateOsmos }: { run: RunView; canCreateOsmos: bo
       <div className="mr-auto flex w-full max-w-[92%] flex-col gap-200 rounded-2xl rounded-bl-md border border-border bg-secondary px-400 py-300">
         <div className="flex flex-wrap items-center gap-200">
           <span className="font-semibold text-[length:var(--text-300)]">Fabric orchestrator</span>
-          <StatusChip status={run.status === 'queued' ? 'working' : run.status} />
+          {pollingPaused && !done ? <span role="status">Monitoring paused (last state: {run.status})</span>
+            : <StatusChip status={run.status === 'queued' ? 'working' : run.status} />}
         </div>
         {specialists.length > 0 && (
           <ul className="flex flex-wrap gap-200" aria-label="Specialists in this run">
@@ -151,7 +160,7 @@ function RunMessages({ run, canCreateOsmos }: { run: RunView; canCreateOsmos: bo
         )}
         {run.response ? (
           <div className="whitespace-pre-wrap break-words text-[length:var(--text-300)] leading-300">{run.response}</div>
-        ) : !done ? (
+        ) : !done && !pollingPaused ? (
           <p className="flex items-center gap-200 text-[length:var(--text-300)] text-muted-foreground">
             <Loader2 aria-hidden className="icon-size-200 animate-spin motion-reduce:animate-none" />
             {specialists.length ? 'Specialists are working...' : 'Planning the request...'}
@@ -169,22 +178,36 @@ function OsmosCard({ run, canCreate }: { run: RunView; canCreate: boolean | null
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const osmos = run.osmos;
-  const running = Boolean(task?.taskId && task.running !== false && !['Completed', 'Failed', 'Cancelled'].includes(task.status ?? ''));
+  const running = Boolean(task?.taskId && task.running !== false && !isTaskTerminal(task.status));
 
   useEffect(() => {
     if (!running) return;
-    const timer = window.setInterval(() => {
-      void (async () => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let attempt = 0;
+    let failures = 0;
+    const tick = async () => {
         try {
           const client = await getRayfinClient();
           const result = await client.functions.getOsmosTask.invoke({ runKey: run.runKey });
-          if (result.ok) setTask(result);
-        } catch {
-          // The manual Refresh button reports errors; background polling stays quiet.
+          if (cancelled) return;
+          if (!result.ok) throw new Error(result.message ?? 'Osmos status is unavailable.');
+          setTask(result);
+          setError(null);
+          failures = 0;
+          if (isTaskTerminal(result.status) || result.running === false) return;
+        } catch (err) {
+          if (cancelled) return;
+          setError(errorMessage(err));
+          if (++failures >= 5) {
+            setTask((current) => current && { ...current, running: false, monitorPaused: true });
+            return;
+          }
         }
-      })();
-    }, 20_000);
-    return () => window.clearInterval(timer);
+        if (!cancelled) timer = setTimeout(() => void tick(), pollDelay(attempt++, 5000, 30000));
+    };
+    timer = setTimeout(() => void tick(), 1500);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [running, run.runKey]);
 
   if (!osmos) return null;

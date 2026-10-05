@@ -35,3 +35,6 @@ services:
     buildCommand: npm run build
   storage:
     enabled: false
+secrets:
+  - name: GITHUB_READ_TOKEN
+    description: GitHub identity credential; owner-only read-only repository functions

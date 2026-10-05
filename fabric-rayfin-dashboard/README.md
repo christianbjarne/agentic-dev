@@ -28,13 +28,14 @@ flowchart LR
     direction LR
     ui["Rayfin static hosting<br/>React UI (protected assets)"]
     auth["Rayfin auth<br/>Fabric / Entra brokered sign-in"]
-    fn["Rayfin Functions<br/>(UserDataFunction runtime)<br/>startRun · pollRun · getConversation<br/>getWorkspaceStatus · whoAmI<br/>createOsmosTask · getOsmosTask"]
+    fn["Rayfin Functions<br/>(UserDataFunction runtime)<br/>chat · feed · workspace inventory/Git<br/>GitHub catalog/commits/patches<br/>Osmos submission/job monitoring"]
     db[("Fabric SQL database<br/>Conversation · AgentRun<br/>RunEvent · RunOutput<br/>row-level security: owner_id")]
     items["Workspace items<br/>notebooks · pipelines · jobs"]
     bridge["Notebook nb_osmos_task_bridge<br/>(runs as the signed-in owner)"]
     lh[("Lakehouse lh_command_center<br/>Files/osmos/&lt;task&gt;.json")]
   end
-  foundry["Azure AI Foundry<br/>fabric-orchestrator hosted agent<br/>+ 11 specialists"]
+  foundry["Azure AI Foundry<br/>fabric-orchestrator hosted agent<br/>+ 10 specialists"]
+  github["GitHub REST API<br/>owner-authorized repositories<br/>branches · commits · patches · PRs"]
   fabricapi["Fabric REST API<br/>/workspaces · /items · /jobs/instances · /git"]
   osmos["Project Osmos<br/>(Lakehouse aichat API)"]
 
@@ -45,6 +46,7 @@ flowchart LR
   fn -->|RLS-scoped data client| db
   fn -->|"Responses API, background=true<br/>ctx.Tokens.AzureAI"| foundry
   fn -->|ctx.Tokens.Fabric| fabricapi
+  fn -->|"encrypted GITHUB_READ_TOKEN<br/>owner-only, read-only handlers"| github
   fabricapi --- items
   fn -->|"RunNotebook job<br/>(ctx.Tokens.Fabric)"| bridge
   bridge -->|"notebookutils token → MWC token"| osmos
@@ -59,17 +61,22 @@ flowchart LR
    - **Attaches Fabric workspace context** (app owner only). The Foundry agent identities can only reach the workspaces they have roles on. So when a prompt names a workspace (by name, id or URL), the app resolves it with the owner's Fabric token and adds the inventory to the prompt: items, plus the tables of any lakehouse in a pasted URL (capped at 12,000 characters). The agents then answer from it instead of failing with `403 InsufficientPrivileges`. The orchestrator feed entry says which workspaces were attached.
    - Calls the orchestrator's Responses endpoint with `background: true`, so the call doesn't hit the 240-second function timeout.
    - Chains follow-up prompts in a conversation through `previous_response_id`.
-2. **`pollRun`** (UI polls every few seconds)
+2. **`pollRun`** (UI polls with bounded backoff, 2-15 seconds)
    - Reads the Foundry response.
    - Turns orchestrator and specialist activity (delegation tool calls and their outputs) into `RunEvent` rows: the **live feed**.
    - Splits the final answer into 3,900-character `RunOutput` chunks, which keeps each row under the Rayfin 4,000-character text limit.
-   - Marks the run `completed` or `failed`.
-   - Runs older than 20 minutes are failed as stale.
+   - Preserves Responses terminal states: `completed`, `failed`, `cancelled`, `incomplete`. Pending calls without matching output are not falsely marked completed; their unresolved status settles with the parent run.
+   - Runs older than 20 minutes are failed as stale, measured from the persisted start time. A submission without a response id settles after 90 seconds.
+   - Clears the conversation's active-run pointer on terminal states and reconciles legacy dangling Working events. Reopening history or reloading resumes a nonterminal run using its stored response id.
    - Extracts the **Project Osmos handoff**. It prefers a structured `osmos_create_task` / handoff JSON. If none is present, it falls back to the delegation the orchestrator sent `osmos_data_engineer`: workspace id, the `LH_Osmos` lakehouse id, display name and composed instruction. The `osmos_data_engineer` agent returns `USER_ACTION_REQUIRED` with the handoff only as prose, because Osmos rejects agent identities.
 3. **The UI**
    - Shows the reply in the chat.
-   - Drives the **agent graph**: each of the 12 agents is idle, working, completed or failed, based on the latest `RunEvent` rows.
+   - Drives the **agent graph** from real `delegate_to_specialist` calls and their call-id-matched outputs. Mentioning an agent in answer text never fabricates activity. Latest terminal events take precedence over earlier Working events.
+   - Displays the orchestrator and ten configured specialists: `guideline_auditor`, `fabric_architect`, `data_engineer`, `osmos_data_engineer`, `code_reviewer`, `integration`, `fabric_iq`, `power_bi`, `power_grid`, `fabric_automation`. Unknown specialists actually observed in responses remain visible; the retired release-intelligence agent is excluded.
    - Lists the **History** of conversations from `Conversation` rows.
+   - Pauses monitoring visibly after five consecutive polling errors; manual refresh resumes it. It does not label paused or timed-out monitoring as a successful run.
+
+All chat submissions go to `/agents/fabric-orchestrator/endpoint/protocols/openai/responses?api-version=v1`. Hosted Responses may reveal specialist call/output evidence only at completion. Until the provider exposes that evidence, the dashboard shows the known orchestrator status, not guessed specialist activity.
 
 Every row has `owner_id` = the caller's Entra object id, and Rayfin row-level security (`claims.sub.eq(item.owner_id)`) limits each user to their own history and feed.
 
@@ -81,12 +88,12 @@ Every row has `owner_id` = the caller's Entra object id, and Rayfin row-level se
 | Sign-in | Function keys + separate Easy Auth | Native Fabric / Entra sign-in; no keys in the browser |
 | Chat with orchestrator | `POST dashboard/runs` + poll | `startRun` + `pollRun` (Foundry background responses) |
 | New conversation / History | Azure Table Storage | Fabric SQL database (`Conversation`, `AgentRun`, `RunOutput`) with per-user row-level security, queryable through the SQL endpoint |
-| Agent graph (12 agents) | Driven by the live-feed table | Same 12 agents, driven by `RunEvent` rows |
+| Agent graph | Original roster driven by the live-feed table | Orchestrator + ten current specialists; truthful call/output evidence, terminal reconciliation |
 | Live feed of delegations | Agent writes to Table Storage via `report_agent_activity` | Derived from the Foundry response itself (delegation tool calls and outputs), so no extra agent write path is needed |
-| Fabric job tracking | `fabric_jobs` table written by the agent | Native Fabric REST: `/items` + `/jobs/instances` for the workspace, plus item counts |
-| Repository / PR panel | GitHub branch, changed files, PR, code review | Fabric **Git integration** status (provider, repo, branch, folder). GitHub PR review is not ported. |
+| Fabric job tracking | `fabric_jobs` table written by the agent | Selectable live workspaces, grouped item inventory, native job-instance states, Git status and uncommitted changes |
+| Repository / PR panel | GitHub branch, changed files, PR, code review | Separate GitHub and Fabric sections; repo/branch selectors, real commit authors/messages/SHA links/times, changed-file patches, open branch PRs, Fabric branch-workspace selection |
 | Project Osmos | OBO sign-in card → create task → Git finalize | Osmos card → **Create Osmos task**. The app runs the Fabric notebook `nb_osmos_task_bridge` as the signed-in owner. The notebook creates and monitors the task, and the card auto-refreshes its status from OneLake. Owner only (see limitations). Git finalize is not ported. |
-| Look and accessibility | Single page, fixed layout | Fluent-style tokens, light/dark theme, skip link, ARIA live regions, keyboard-reachable panels, responsive grid |
+| Look and accessibility | Single page, fixed layout | Viewport-bounded panels, fixed scrolling chat and pinned composer, light/dark theme, skip link, ARIA live regions, keyboard-reachable controls |
 
 ## Design decisions
 
@@ -108,9 +115,9 @@ Every row has `owner_id` = the caller's Entra object id, and Rayfin row-level se
 4. **Foundry background mode.** Rayfin functions have a 240-second timeout. Orchestrator runs with several specialists can take longer, so `startRun` returns right away and the UI polls.
 5. **Credentials.**
    - Functions use `ctx.Tokens.AzureAI` and `ctx.Tokens.Fabric`, which Rayfin issues for the app identity.
-   - No secrets, keys or connection strings are stored in code or in `rayfin.yml`, and `ctx.Secrets` is empty.
+   - No secrets, keys or connection strings are stored in code or in `rayfin.yml`. GitHub reads use `ctx.Secrets.GITHUB_READ_TOKEN`, encrypted through `rayfin secret set`; generated files contain only the secret name.
    - The publishable key (public by design) lives only in the git-ignored `rayfin/.deployments.json` and the generated `.env.local`.
-6. **Least privilege for workspace reads.** `getWorkspaceStatus` only reads its own workspace (`ALLOWED_WORKSPACES`), so the dashboard can't be used to browse other workspaces the app identity can reach.
+6. **Least privilege for external reads.** Other callers are restricted to the app workspace (`ALLOWED_WORKSPACES`). Only the verified app owner can browse other accessible workspaces or use the GitHub credential. GitHub handlers only issue read requests; repo choices come from the credential's accessible catalog, not a fabricated roster. The currently configured credential is the deploying owner's authenticated GitHub user credential, not a GitHub App installation token.
 7. **Osmos guard.** Because function tokens are the app identity, not the caller (see limitations), `createOsmosTask` refuses to run unless the signed-in caller *is* the app identity. Otherwise any user could create Osmos tasks under someone else's name. Workspace-context enrichment has the same guard.
    - The owner match compares every object id the caller token carries (`oid`, the bare `sub`, or a `/users/<oid>` path in `sub`) with the app identity's `oid`, and compares the `email`/`upn`/`preferred_username`/`unique_name` claims with its `upn`. All comparisons are case-insensitive.
    - The UI retries `whoAmI` with backoff and shows "Checking your sign-in…" while it waits. It shows the owner-only note only when the server says the caller is *not* the owner. If `whoAmI` keeps failing, the button stays enabled and the server-side guard decides. Previously, one failed `whoAmI` call (e.g. on a cold start) greyed the card out even for the owner.
@@ -119,15 +126,18 @@ Every row has `owner_id` = the caller's Entra object id, and Rayfin row-level se
    - `createOsmosTask` submits `nb_osmos_task_bridge` through the Jobs API. The job runs as the submitter, so the task is created as the signed-in user, which is native inside Fabric.
    - The notebook creates the task, then polls its status every 30 s for up to 20 minutes. It writes `Files/osmos/<taskId>.json` in `lh_command_center`.
    - `getOsmosTask` reads that file through OneLake with `ctx.Tokens.Storage`.
+   - Submission persists the validated Fabric job `Location`, instance id and start time. Reads poll the actual notebook job, then the Osmos status file. If the bridge finishes while the task is still running, another notebook invocation uses `mode=status` and the existing task id, never creates another task. Monitoring resumes after reload and is bounded to two hours; failures/timeouts are visible and polling stops on terminal states.
 
    The task ID is assigned up front, so the "Open in Fabric" link works immediately. The notebook validates its inputs (GUIDs, an `abfss://` result path), uses no hardcoded workspace or lakehouse ids or OneLake endpoints, and passes the repo's `FAB001`–`FAB010` notebook checks.
+9. **Non-destructive Fabric branch selection.** The branch selector offers existing accessible workspaces connected to the same provider/repository/folder, and switches the live view to the selected branch's workspace. It never disconnects, reconnects, syncs, deletes or overwrites items. Normal reads use Fabric's native `/git/workspaceRelations` plus previously viewed connections cached for five minutes under the app's tenant/user/application identity; no token is logged or exposed. Manually connected branch peers may have no Fabric relation: select their workspace once to make their verified connection available, or use **Discover additional branch workspaces**. Explicit full discovery scans 40-workspace pages with eight concurrent reads per batch, paced at least one second apart. HTTP 429 resumes from the interrupted batch after bounded Retry-After; discovery pauses visibly after five minutes. Known branches stay selectable while more are being discovered. Unavailable metadata produces explicit partial-list warnings. Full discovery in this 579-workspace tenant was throttled before finishing; ordinary workspace and known-branch selection avoid that fan-out. Discovery is cancelled when its source workspace changes. A remote branch without an existing connected workspace is not selectable; provision it with the Fabric Git branch-workspace workflow first.
+10. **Live-view bounds and refresh.** Jobs refresh every 10 seconds while active, Git status operations every five seconds, otherwise workspace data every minute. Git status HTTP 202 is followed through its operation id rather than starting overlapping operations. Catalogs are bounded to 5,000 workspaces, 500 items per workspace, and 1,000 GitHub catalogs/branches/file entries, with explicit errors beyond the bounds. Commit history shows the latest 15 commits, up to 30 open branch PRs, and at most 30,000 patch characters per file. Jobs show the latest five instances for up to 25 runnable items and 40 total jobs; warnings expose partial/unavailable history rather than pretending it is complete.
 
 ## Rayfin preview limitations found (and workarounds)
 
 | Limitation | Effect | What this app does |
 |---|---|---|
 | Tenant setting **AppBackendTenant** (Fabric Apps) is off by default; the capacity override alone is not enough | `403 FeatureNotAvailable` on `rayfin up` | Enabled at tenant level **for the security group `sg-fabric-app-items-preview` only** (`a4a0d12f-ca32-4e6e-9c84-c16c6a2ccce0`, member: admin), with `delegateToCapacity=true`, plus a capacity override for `c59bb3a9-…`. It took about 4 minutes to propagate. |
-| No per-user on-behalf-of tokens in functions: `ctx.Tokens.*` are the **app identity** (the deploying owner) | Foundry and Fabric calls run as the app owner, not the caller | Data access is still per-user (RLS). Workspace reads are pinned to one workspace. Osmos creation is limited to the app identity. |
+| No per-user on-behalf-of tokens in functions: `ctx.Tokens.*` are the **app identity** (the deploying owner) | Foundry and Fabric calls run as the app owner, not the caller | Data access is still per-user (RLS). Nonowners are restricted to the app workspace; cross-workspace/GitHub reads and Osmos creation are owner-only. |
 | The worker detects the context parameter only from the literal annotation `RayfinContext<…>` | An aliased type gives `400 MissingInput` at runtime, and `validate:functions` doesn't catch it | Every handler spells out `RayfinContext<UniversalAppSchema, AudienceType.X>` |
 | Function type generation emits names of types imported from package `.d.ts` files | The generated `types.ts` fails to compile | Handlers return `Promise<Wire<T>>` (a local mapped type), so types are emitted structurally |
 | Data queries without `.select([...])` return only `id`; mutation results aren't reliable for fields | Missing fields | Explicit field lists (`RUN_FIELDS`, `EVENT_FIELDS`, `CONVERSATION_FIELDS`); re-read after writes |
@@ -145,6 +155,8 @@ Prerequisites:
 - An Entra account with Contributor on the workspace.
 - The Fabric Apps tenant setting enabled for you (see above).
 - Foundry access for the app identity on project `fabric-dev-agents`. This is the user who runs `rayfin up`.
+- An active capacity. During overhaul validation, capacity `c59bb3a9-b731-493f-b2e5-3c131f79d479` returned `CapacityNotActive`; its existing backing resource `fabricdemocapacity123` was resumed without changing the SKU or assigning workspaces.
+- An owner-authorized GitHub credential for the optional GitHub view. Use the narrowest read permissions that cover repository metadata, commits and pull requests.
 
 ```powershell
 cd fabric-rayfin-dashboard
@@ -153,9 +165,13 @@ npx -y npm@11 install            # npm 10 hits an arborist bug with this workspa
 
 # Quality gates
 npm run typecheck
+npm run build
 npm run lint
-npm test                         # 44 tests
+npm test                         # 48 frontend tests + 9 backend regression tests
 npm run validate:functions
+
+# Store the credential encrypted; never paste a token into source or a command argument.
+gh auth token --user christianbjarne | npx rayfin secret set GITHUB_READ_TOKEN --stdin --describe="Owner-authorized GitHub repository reads" --json
 
 # Deploy or update everything (data schema, functions, static site)
 npx rayfin up --workspace-id 8b835744-f17d-44ef-b43a-3fe3d51c8e35 --json --yes
@@ -167,15 +183,18 @@ python scripts/deploy-fabric-items.py --workspace-id 8b835744-f17d-44ef-b43a-3fe
 After you change a function signature, regenerate `packages/functions/src/types.ts`. Never edit it by hand:
 
 ```powershell
-node --input-type=module -e "const m=await import('./node_modules/@microsoft/rayfin-cli/dist/utils/functions-types-generator.js'); await m.generateFunctionsTypes(process.cwd()+'/packages/functions')"
+npm run -w @rayfin-app/shared build
+npx rayfin dev functions apply
 ```
+
+Stop the development watcher before final builds. CLI 1.36.1 generates the function contracts before starting the local host; on this machine the host then fails with the documented duplicate `AZURE_FUNCTIONS_ENVIRONMENT` key. Generated contracts can still be checked by the quality gates and deployed to the functioning remote runtime.
 
 ### Local development against the deployed backend
 
 ```powershell
-cd packages/frontend
+cd packages\frontend
 $env:RAYFIN_REMOTE_FUNCTIONS = '1'   # proxy /functions/* to the deployed backend
-npx vite --port 5173
+node ..\..\node_modules\vite\bin\vite.js --host 127.0.0.1 --port 5173
 ```
 
 The `rayfinLocalDev` Vite plugin signs you in through the brokered Entra exchange. Data calls and function calls then go to the deployed AppBackend.
@@ -185,6 +204,8 @@ The `rayfinLocalDev` Vite plugin signs you in through the brokered Entra exchang
 ```powershell
 node scripts/smoke-deployed.mjs                 # whoAmI, workspace status, full chat run
 node scripts/smoke-deployed.mjs --skip-run      # identity + workspace/job status only
+node scripts/smoke-deployed.mjs --catalog --skip-run  # read-only GitHub/workspace switching checks
+node scripts/smoke-deployed.mjs --branches --skip-run --workspace-id 5f46cd37-2c55-46dc-a5b6-12d2abcd5204  # existing main/test branch workspaces
 node scripts/smoke-deployed.mjs --prompt "..."  # custom prompt
 node scripts/smoke-deployed.mjs --create-osmos --prompt "Use Project Osmos to ..."  # also creates the Osmos task
 node scripts/smoke-deployed.mjs --osmos-run <runKey>  # create/refresh the Osmos task for an existing run
@@ -198,6 +219,14 @@ The script:
 Tokens are never printed.
 
 ## Evidence (verified live)
+
+Overhaul verification against the existing deployed item:
+- Run `b52be8b1811e477c83cd88ba53aa0f3b`, conversation `3a8ffcf4-c2b7-42f6-b63a-42b89f4b5a04`, explicitly requested a read-only review by `guideline_auditor` and `fabric_architect`. The correct orchestrator endpoint completed with both requested specialist calls and all three events completed; no upstream routing failure was reproduced. No resources, commits or Osmos tasks were requested.
+- `getConversation` restored the completed response from Fabric data. The remote-backed browser restored the same conversation after reload; terminal graph/feed activity did not remain Working.
+- Owner identity returned true for object `4f99e30b-38b3-4f03-af1c-586a10b89550`. Owner gating and the server-side `LH_Osmos` mapping remain intact. This overhaul did not create an Osmos task or delete any Fabric items.
+- The GitHub catalog returned five accessible repos. Verified `christianbjarne/agentic-dev` and `christianbjarne/fabric-foundry-agents`, alternate branches, real commits/PRs and changed-file patches.
+- Workspace selection and live inventories used actual Fabric data. Browser verification switched `git-integration-demo` (`5f46cd37-2c55-46dc-a5b6-12d2abcd5204`, `main`) to `test` (`cec77fd7-c6d7-4554-84bb-16da03b36135`, `test`) with the branch-workspace selector and restored the selection after reload. Full-tenant discovery was separately throttled; normal known/relation-based selection remains available.
+- Browser verification used the local Vite frontend against the deployed functions because hosted interactive sign-in blocks headless authentication. Desktop panels and document fit a 1280 x 720 viewport; the chat's messages scroll internally and the composer stays pinned.
 
 The headless smoke test (`scripts/smoke-deployed.mjs`) against the deployed backend:
 - `whoAmI` and `getWorkspaceStatus` returned OK.
@@ -225,8 +254,10 @@ Fix round ("chat not working, Osmos didn't work"):
 ## Known gaps
 
 - **Per-user tokens for Foundry and Fabric.** Rayfin functions don't currently offer OBO, so these calls run as the app identity. Osmos runs as the owner through the notebook bridge. Revisit when Rayfin adds user-delegated function tokens.
-- **Osmos bridge latency.** The notebook needs a Spark session (about 15–60 s on starter pools) before the task exists. It monitors for 20 minutes; after that, use "Open in Fabric".
-- **Osmos Git finalize** and the **GitHub PR / code-review panel** are not ported. The Repository panel shows Fabric Git integration status instead.
+- **Osmos bridge latency.** The notebook needs a Spark session (about 15–60 s on starter pools) before the task exists. Each bridge invocation monitors for 20 minutes; the app can resume status-only monitoring of an existing task, bounded to two hours.
+- **Osmos Git finalize** and automated GitHub code-review execution are not ported. The GitHub section now displays real commits, patches and open PRs, but does not perform writes or reviews.
+- **Intermediate specialist visibility.** Hosted Responses exposed specialist calls only at completion in the verified run. The UI cannot truthfully show earlier delegations when the provider has not returned them.
+- **Fabric branches.** Selecting a branch requires an existing accessible workspace connected to that branch in the same repo/folder. The UI deliberately does not create branch workspaces or modify Git connections.
 - The orchestrator's own `report_agent_activity` tool still writes to the old dashboard's Table Storage. That is agent behavior and was intentionally left unchanged.
 
 ## Project layout

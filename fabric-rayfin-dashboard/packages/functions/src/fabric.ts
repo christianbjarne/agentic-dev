@@ -1,5 +1,6 @@
-import type { FabricJobView, OsmosTaskView, WorkspaceStatusView } from '@rayfin-app/shared';
-import { randomUUID } from 'node:crypto';
+import type { FabricJobView, OsmosTaskView, WorkspaceStatusView, WorkspaceChoice, WorkspaceBranchChoice, WorkspaceBranchPage } from '@rayfin-app/shared';
+import { isTaskTerminal } from '@rayfin-app/shared';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   asArray,
   asRecord,
@@ -7,7 +8,8 @@ import {
   nowIso,
   request,
   str,
-  type HttpResult,
+  HttpResult,
+  jwtClaims,
 } from './http.js';
 
 export const FABRIC_API = 'https://api.fabric.microsoft.com';
@@ -25,13 +27,21 @@ const JOB_ITEM_TYPES = new Set([
 ]);
 const MAX_JOB_ITEMS = 25;
 const JOBS_PER_ITEM = 5;
+const gitConnectionCache = new Map<string, { expires: number; result: HttpResult }>();
+
+function gitCacheKey(token: string, workspaceId: string): string {
+  const claims = jwtClaims(token);
+  const identity = claims.oid && claims.tid
+    ? `${claims.tid}:${claims.oid}:${claims.appid ?? claims.azp ?? ''}` : token;
+  return `${createHash('sha256').update(identity).digest('hex')}:${workspaceId}`;
+}
 
 function bearer(token: string): string {
   return `Bearer ${token}`;
 }
 
 async function fabricGet(token: string, path: string): Promise<HttpResult> {
-  return request('GET', `${FABRIC_API}${path}`, bearer(token), undefined, {}, 30_000);
+  return request('GET', `${FABRIC_API}${path}`, bearer(token), undefined, { 'x-ms-fabric-skill': 'git-integration-operations-cli' }, 15000);
 }
 
 async function listAll(token: string, path: string, limit = 500): Promise<Record<string, unknown>[]> {
@@ -45,11 +55,16 @@ async function listAll(token: string, path: string, limit = 500): Promise<Record
     const token_ = str(body.continuationToken, 2000);
     url = token_ ? `${path}${path.includes('?') ? '&' : '?'}continuationToken=${encodeURIComponent(token_)}` : '';
   }
+  if (url || items.length > limit) throw new Error(`The Fabric inventory exceeds ${limit} items. Refine the workspace scope.`);
   return items;
 }
 
+export async function listWorkspaces(token: string): Promise<WorkspaceChoice[]> {
+  return (await listAll(token, '/v1/workspaces', 5000)).map((row) => ({ id: str(row.id, 64), name: str(row.displayName, 200) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 /** Workspace summary, latest job instances and Fabric Git connection. */
-export async function workspaceStatus(token: string, workspaceId: string): Promise<WorkspaceStatusView> {
+export async function workspaceStatus(token: string, workspaceId: string, gitOperationId = ''): Promise<WorkspaceStatusView> {
   const checkedAt = nowIso();
   const workspace = await fabricGet(token, `/v1/workspaces/${workspaceId}`);
   if (!workspace.ok) {
@@ -58,24 +73,31 @@ export async function workspaceStatus(token: string, workspaceId: string): Promi
       message: describeFailure('Workspace lookup', workspace),
       workspaceId,
       itemCounts: [],
+      items: [],
       jobs: [],
       checkedAt,
     };
   }
   const info = asRecord(workspace.body);
+  const warnings: string[] = [];
   const items = await listAll(token, `/v1/workspaces/${workspaceId}/items`);
   const counts = new Map<string, number>();
   for (const item of items) {
     const type = str(item.type, 64);
     counts.set(type, (counts.get(type) ?? 0) + 1);
   }
-  const jobItems = items.filter((item) => JOB_ITEM_TYPES.has(str(item.type, 64))).slice(0, MAX_JOB_ITEMS);
+  const eligible = items.filter((item) => JOB_ITEM_TYPES.has(str(item.type, 64)));
+  const jobItems = eligible.slice(0, MAX_JOB_ITEMS);
+  if (eligible.length > jobItems.length) warnings.push(`Jobs cover the first ${MAX_JOB_ITEMS} runnable items. Inventory includes all items.`);
   const jobLists = await Promise.all(
     jobItems.map(async (item): Promise<FabricJobView[]> => {
       const itemId = str(item.id, 64);
       const result = await fabricGet(token, `/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances`);
-      if (!result.ok) return [];
-      return asArray(asRecord(result.body).value)
+      if (!result.ok) {
+        warnings.push(`${str(item.displayName, 200)}: job history unavailable (HTTP ${result.status}).`);
+        return [];
+      }
+      const listed = asArray(asRecord(result.body).value)
         .map(asRecord)
         .map((job) => ({
           itemId,
@@ -89,16 +111,31 @@ export async function workspaceStatus(token: string, workspaceId: string): Promi
           endTimeUtc: str(job.endTimeUtc, 40) || undefined,
           failureReason: str(asRecord(job.failureReason).message, 500) || undefined,
         }))
-        .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))
+        .sort((a, b) => Number(!isTaskTerminal(b.status)) - Number(!isTaskTerminal(a.status)) || (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))
         .slice(0, JOBS_PER_ITEM);
+      return Promise.all(listed.map(async (job) => {
+        if (isTaskTerminal(job.status)) return job;
+        const snapshot = await fabricGet(token, `/v1/workspaces/${workspaceId}/items/${itemId}/jobs/instances/${job.jobId}`);
+        if (!snapshot.ok) {
+          warnings.push(`${job.itemName}: live job status unavailable (HTTP ${snapshot.status}). Showing last listed state.`);
+          return job;
+        }
+        const state = asRecord(snapshot.body);
+        return {
+          ...job, status: str(state.status, 32) || job.status,
+          endTimeUtc: str(state.endTimeUtc, 40) || job.endTimeUtc,
+          failureReason: str(asRecord(state.failureReason).message, 500) || job.failureReason,
+        };
+      }));
     }),
   );
   const jobs = jobLists
     .flat()
-    .sort((a, b) => (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))
+    .sort((a, b) => Number(!isTaskTerminal(b.status)) - Number(!isTaskTerminal(a.status)) || (b.startTimeUtc ?? '').localeCompare(a.startTimeUtc ?? ''))
     .slice(0, 40);
 
   const gitResult = await fabricGet(token, `/v1/workspaces/${workspaceId}/git/connection`);
+  if (gitResult.ok) gitConnectionCache.set(gitCacheKey(token, workspaceId), { result: gitResult, expires: Date.now() + 5 * 60_000 });
   let git: WorkspaceStatusView['git'];
   if (gitResult.ok) {
     const body = asRecord(gitResult.body);
@@ -115,6 +152,38 @@ export async function workspaceStatus(token: string, workspaceId: string): Promi
       directory: str(details.directoryName, 400) || undefined,
       message: connected ? undefined : 'This workspace is not connected to Git.',
     };
+    if (connected) {
+      let state = await fabricGet(token, gitOperationId
+        ? `/v1/operations/${gitOperationId}` : `/v1/workspaces/${workspaceId}/git/status`);
+      const operationId = gitOperationId || (state.status === 202 ? state.headers.get('x-ms-operation-id') : null);
+      if (operationId) {
+        const operation = gitOperationId ? state : await fabricGet(token, `/v1/operations/${encodeURIComponent(operationId)}`);
+        const opStatus = str(asRecord(operation.body).status, 32);
+        if (operation.ok && opStatus === 'Succeeded') {
+          state = await fabricGet(token, `/v1/operations/${encodeURIComponent(operationId)}/result`);
+        } else if (operation.ok && ['NotStarted', 'Running'].includes(opStatus)) {
+          git.operationId = operationId;
+          git.message = `Git status operation ${opStatus}; monitoring will resume on refresh.`;
+          state = new HttpResult(202, null, operation.headers);
+        } else {
+          state = new HttpResult(operation.ok ? 502 : operation.status, operation.body, operation.headers);
+        }
+      } else if (state.status === 202) {
+        git.message = 'Git status is being computed; refresh to retry.';
+      }
+      if (state.ok && state.status !== 202) {
+        const snapshot = asRecord(state.body);
+        if (Array.isArray(snapshot.changes)) {
+          git.workspaceHead = str(snapshot.workspaceHead, 64) || undefined;
+          git.remoteCommitHash = str(snapshot.remoteCommitHash, 64) || undefined;
+          git.changeDetails = snapshot.changes.map(asRecord).map((change) => ({
+            name: str(asRecord(change.itemMetadata).displayName, 200) || str(asRecord(change.itemMetadata).itemIdentifier, 100),
+            workspaceChange: str(change.workspaceChange, 40), remoteChange: str(change.remoteChange, 40),
+          }));
+          git.changes = git.changeDetails.filter((change) => change.workspaceChange && change.workspaceChange !== 'None').length;
+        } else git.message = 'Git status returned no change snapshot; uncommitted item count is unavailable.';
+      } else if (!state.ok) git.message = describeFailure('Git status', state);
+    }
   } else {
     git = { connected: false, message: describeFailure('Git connection', gitResult) };
   }
@@ -128,11 +197,79 @@ export async function workspaceStatus(token: string, workspaceId: string): Promi
       .map(([type, count]) => ({ type, count }))
       .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type)),
     jobs,
+    items: items.map((item) => ({ id: str(item.id, 64), name: str(item.displayName, 200), type: str(item.type, 64) })),
+    warnings,
     git,
     checkedAt,
   };
 }
 
+export async function workspaceBranches(token: string, workspaceId: string, cursor: number, discover = true): Promise<WorkspaceBranchPage> {
+  const current = await fabricGet(token, `/v1/workspaces/${workspaceId}/git/connection`);
+  if (!current.ok) throw new Error(describeFailure('Git connection', current));
+  gitConnectionCache.set(gitCacheKey(token, workspaceId), { result: current, expires: Date.now() + 5 * 60_000 });
+  const details = asRecord(asRecord(current.body).gitProviderDetails);
+  if (!str(details.branchName, 200)) return { choices: [], warnings: [], nextCursor: null };
+  const repositoryKey = (value: Record<string, unknown>) => ['gitProviderType', 'ownerName', 'organizationName', 'projectName', 'repositoryName', 'directoryName']
+    .map((key) => key === 'directoryName' ? str(value[key], 300) : str(value[key], 300).toLowerCase()).join('|');
+  const key = repositoryKey(details);
+  const workspaces = await listWorkspaces(token);
+  let page = workspaces.slice(cursor, cursor + 40);
+  const result: WorkspaceBranchChoice[] = [];
+  const warnings: string[] = [];
+  if (!discover) {
+    const relations = await fabricGet(token, `/v1/workspaces/${workspaceId}/git/workspaceRelations`);
+    if (relations.ok) {
+      const ids = new Set(asArray(asRecord(relations.body).value).map(asRecord).map((relation) => str(relation.relatedWorkspaceId, 64)));
+      page = workspaces.filter((workspace) => ids.has(workspace.id)).slice(0, 40);
+      if (ids.size > 40) warnings.push('Branch relations exceed 40 workspaces. Use full discovery to inspect additional branches.');
+    } else {
+      warnings.push(describeFailure('Fabric branch relations', relations));
+      page = [];
+    }
+  }
+  for (const [cacheKey, value] of gitConnectionCache) if (value.expires <= Date.now()) gitConnectionCache.delete(cacheKey);
+  for (const workspace of workspaces) {
+    const cached = gitConnectionCache.get(gitCacheKey(token, workspace.id));
+    const candidate = asRecord(asRecord(cached?.result.body).gitProviderDetails);
+    const branch = str(candidate.branchName, 250);
+    if (branch && repositoryKey(candidate) === key) result.push({ ...workspace, branch });
+  }
+  for (let offset = 0; offset < page.length; offset += 8) {
+    let fetched = false;
+    let throttled = 0;
+    const choices = await Promise.all(page.slice(offset, offset + 8).map(async (workspace) => {
+      const cacheKey = gitCacheKey(token, workspace.id);
+      let connection = workspace.id === workspaceId ? current : gitConnectionCache.get(cacheKey)?.result;
+      if (!connection) {
+        fetched = true;
+        try {
+          connection = await fabricGet(token, `/v1/workspaces/${workspace.id}/git/connection`);
+        } catch (error) {
+          warnings.push(`Git metadata unavailable for ${workspace.name}: ${error instanceof Error ? error.message.slice(0, 300) : 'Request failed'}`);
+          return undefined;
+        }
+      }
+      if (connection.ok || [403, 404].includes(connection.status)) {
+        gitConnectionCache.set(cacheKey, { result: connection, expires: Date.now() + 5 * 60_000 });
+      }
+      if (!connection.ok) {
+        if ([403, 404].includes(connection.status)) return undefined;
+        if (connection.status === 429) {
+          throttled = Math.max(throttled, Math.min(60, Math.max(1, Number(connection.headers.get('retry-after')) || 10)));
+        } else warnings.push(describeFailure(`Git metadata unavailable for ${workspace.name}`, connection));
+        return undefined;
+      }
+      const candidate = asRecord(asRecord(connection.body).gitProviderDetails);
+      const branch = str(candidate.branchName, 250);
+      return branch && repositoryKey(candidate) === key ? { ...workspace, branch } : undefined;
+    }));
+    for (const choice of choices) if (choice && !result.some((item) => item.id === choice.id)) result.push(choice);
+    if (throttled) return { choices: result, warnings, nextCursor: cursor + offset, retryAfterSeconds: throttled };
+    if (fetched) await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return { choices: result, warnings, nextCursor: discover && cursor + 40 < workspaces.length ? cursor + 40 : null };
+}
 // --- Workspace context for prompts -----------------------------------------
 
 const GUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -326,15 +463,16 @@ export async function submitOsmosBridge(
   token: string,
   appWorkspaceId: string,
   req: OsmosRequest,
+  existingTaskId?: string,
 ): Promise<OsmosTaskView> {
   if (!req.instruction.trim()) return { ok: false, message: 'The Osmos handoff has no instruction.' };
   if (req.instruction.length > MAX_INSTRUCTION) {
     return { ok: false, message: 'The composed instruction is too long for Project Osmos.' };
   }
   const { notebookId, lakehouseId } = await bridgeItems(token, appWorkspaceId);
-  const taskId = randomUUID();
+  const taskId = existingTaskId ?? randomUUID();
   const parameters: Record<string, string> = {
-    mode: 'create',
+    mode: existingTaskId ? 'status' : 'create',
     task_id: taskId,
     workspace_id: req.workspaceId,
     lakehouse_id: req.lakehouseId,
@@ -352,18 +490,29 @@ export async function submitOsmosBridge(
         parameters: Object.fromEntries(Object.entries(parameters).map(([key, value]) => [key, { value, type: 'string' }])),
       },
     },
+    { 'x-ms-fabric-skill': 'git-integration-operations-cli' },
   );
   if (result.status !== 202 && !result.ok) {
     return { ok: false, message: describeFailure('Starting the Osmos bridge notebook', result) };
+  }
+  const location = result.headers.get('location');
+  if (!location || !validJobLocation(location, appWorkspaceId)) {
+    throw new Error('Fabric accepted the notebook but did not return a valid job-instance Location. Check workspace jobs before retrying.');
   }
   return {
     ok: true,
     taskId,
     status: 'Submitting',
     running: true,
+    jobLocation: location,
     taskPage: osmosTaskPage(req.workspaceId, req.lakehouseId, taskId),
     message: `Creating the task as you through the Fabric notebook ${OSMOS_BRIDGE_NOTEBOOK}.`,
   };
+}
+
+function validJobLocation(location: string, workspaceId: string): boolean {
+  const url = new URL(location);
+  return url.origin === FABRIC_API && new RegExp(`^/v1/workspaces/${workspaceId}/items/[0-9a-f-]{36}/jobs/instances/[0-9a-f-]{36}$`, 'i').test(url.pathname);
 }
 
 /** Read the status the bridge notebook last wrote. Undefined until the notebook has started. */
@@ -373,7 +522,15 @@ export async function readOsmosBridge(
   appWorkspaceId: string,
   req: OsmosRequest,
   taskId: string,
+  jobLocation?: string,
 ): Promise<OsmosTaskView | undefined> {
+  let job: Record<string, unknown> | undefined;
+  if (jobLocation) {
+    if (!validJobLocation(jobLocation, appWorkspaceId)) throw new Error('The persisted Fabric job Location is invalid.');
+    const snapshot = await request('GET', jobLocation, bearer(fabricToken), undefined, { 'x-ms-fabric-skill': 'git-integration-operations-cli' }, 15000);
+    if (!snapshot.ok) throw new Error(describeFailure('Osmos notebook job status', snapshot));
+    job = asRecord(snapshot.body);
+  }
   const { lakehouseId } = await bridgeItems(fabricToken, appWorkspaceId);
   const result = await request(
     'GET',
@@ -382,18 +539,27 @@ export async function readOsmosBridge(
     undefined,
     { 'x-ms-version': '2023-11-03' },
   );
-  if (result.status === 404) return undefined;
+  if (result.status === 404) {
+    if (job && isTaskTerminal(str(job.status, 32))) {
+      return { ok: true, taskId, status: str(job.status, 32) === 'Completed' ? 'Incomplete' : str(job.status, 32), running: false, message: str(asRecord(job.failureReason).message, 500) || 'The notebook ended without reporting an Osmos task state.' };
+    }
+    return undefined;
+  }
   if (!result.ok) throw new Error(describeFailure('Reading the Osmos bridge status', result));
   const state = asRecord(typeof result.body === 'string' ? safeJson(result.body) : result.body);
   if (str(state.taskId, 64) !== taskId) throw new Error('The Osmos bridge status does not match this task.');
   const status = str(state.status, 32) || 'Submitting';
+  const bridgeFailed = job && ['failed', 'cancelled', 'deduped'].includes(str(job.status, 32).toLowerCase());
+  const paused = !isTaskTerminal(status) && job && isTaskTerminal(str(job.status, 32));
   return {
     ok: true,
     taskId,
-    status,
-    running: state.running === true,
+    status: bridgeFailed && !isTaskTerminal(status) ? str(job?.status, 32) : status,
+    running: !isTaskTerminal(status) && !bridgeFailed && !paused,
+    monitorPaused: Boolean(paused && !bridgeFailed),
+    jobLocation,
     taskPage: osmosTaskPage(req.workspaceId, req.lakehouseId, taskId),
-    message: str(state.message, 1000) || undefined,
+    message: bridgeFailed ? str(asRecord(job?.failureReason).message, 500) || 'The Fabric monitoring notebook failed.' : str(state.message, 1000) || undefined,
   };
 }
 

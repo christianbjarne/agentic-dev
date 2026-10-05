@@ -19,24 +19,12 @@ const RESPONSES_URL = `${FOUNDRY_PROJECT_ENDPOINT}/agents/${ORCHESTRATOR_AGENT}/
 const API_VERSION = 'api-version=v1';
 const DELEGATE_TOOL = 'delegate_to_specialist';
 const HANDOFF_ACTION = 'osmos_create_task';
-const KNOWN_AGENTS = new Set([
-  'guideline_auditor',
-  'fabric_architect',
-  'power_grid',
-  'integration',
-  'power_bi',
-  'fabric_automation',
-  'code_reviewer',
-  'release_intelligence',
-  'fabric_iq',
-  'osmos_data_engineer',
-  'data_engineer',
-]);
 
 export interface StartedResponse {
   id: string;
   status: string;
   agentSessionId?: string;
+  parsed: ParsedResponse;
 }
 
 export interface Delegation {
@@ -122,11 +110,13 @@ export async function startResponse(
     return { error: describeFailure('Foundry orchestrator request', result), reset };
   }
   const data = asRecord(result.body);
+  if (!str(data.id, 200)) return { error: 'Foundry accepted the request without a response id; monitoring cannot start.', reset };
   return {
     started: {
       id: str(data.id, 200),
       status: str(data.status, 32) || 'in_progress',
       agentSessionId: str(data.agent_session_id, 200) || undefined,
+      parsed: parseResponse(data),
     },
     reset,
   };
@@ -178,9 +168,18 @@ export function parseResponse(data: Record<string, unknown>): ParsedResponse {
         args = {};
       }
       const rawAgent = str(args.specialist, 64).toLowerCase().replace(/[-\s]/g, '_');
-      const agent = KNOWN_AGENTS.has(rawAgent) ? rawAgent : rawAgent || 'specialist';
+      const agent = rawAgent;
+      if (!agent || agent === 'release_intelligence') continue;
       const result = results.get(callId);
-      const failed = result !== undefined && /^\s*(\[[^\]]*\]\s*)?(error|failed)\b/i.test(result);
+      let failed = result !== undefined && /^\s*(\[[^\]]*\]\s*)?(error|failed)\b/i.test(result);
+      if (result?.trim().startsWith('{')) {
+        try {
+          const structured = asRecord(JSON.parse(result) as unknown);
+          failed ||= Boolean(structured.error || structured.ok === false || structured.status === 'failed');
+        } catch {
+          // Unstructured specialist output is retained as evidence, not parsed as JSON.
+        }
+      }
       if (result) handoffSources.push(result);
       delegations.push({
         callId,

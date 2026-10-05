@@ -1,10 +1,13 @@
 import type { OpaqueSession } from '@microsoft/rayfin-auth';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Root } from './Root';
 import type { AuthConfig, IAuthService } from './services/rayfin-auth.service';
 
+vi.mock('./hooks/use-read', () => ({
+  useRead: () => ({ data: null, loading: false, error: null, refresh: () => {} }),
+}));
 vi.mock('./hooks/use-command-center', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./hooks/use-command-center')>();
   const idle = { loading: false, error: null };
@@ -154,6 +157,7 @@ describe('protected app content with standalone sign-in', () => {
     expect(
       await screen.findByRole('heading', { name: 'Agent command center' })
     ).toBeVisible();
+    await waitFor(() => expect(auth.onSessionChange).toHaveBeenCalled());
     await act(async () => notify?.(null));
     expect(
       await screen.findByRole('button', { name: 'Sign in with Microsoft' })
@@ -178,4 +182,3 @@ describe('protected app content with standalone sign-in', () => {
     ).toBeNull();
   });
 });
-
