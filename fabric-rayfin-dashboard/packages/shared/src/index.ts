@@ -13,6 +13,27 @@ export function isRunTerminal(status: string): boolean {
 export function isTaskTerminal(status?: string | null): boolean {
   return ['completed', 'succeeded', 'failed', 'cancelled', 'canceled', 'deduped', 'incomplete'].includes((status ?? '').toLowerCase());
 }
+/**
+ * An agent event is only "working" while its parent run is genuinely active.
+ * A terminal run resolves the orchestrator to the run outcome and any
+ * unresolved specialist to "incomplete"; nothing is inferred as running.
+ */
+export function effectiveAgentStatus(eventStatus: AgentStatus, agent: string, runStatus?: string): AgentStatus {
+  if (eventStatus !== 'working' || runStatus === undefined) return eventStatus;
+  if (!isRunTerminal(runStatus)) return 'working';
+  return agent === 'fabric_orchestrator' ? (runStatus as AgentStatus) : 'incomplete';
+}
+/** Apply a poll result unless it is older than, or regresses, the state already shown. */
+export function mergeRunUpdate<T extends { runKey: string; status: string; updatedAt: string }>(current: T[], next: T): T[] {
+  return current.map((run) => {
+    if (run.runKey !== next.runKey) return run;
+    if (isRunTerminal(run.status) && !isRunTerminal(next.status)) return run;
+    const shown = Date.parse(run.updatedAt);
+    const incoming = Date.parse(next.updatedAt);
+    if (Number.isFinite(shown) && Number.isFinite(incoming) && incoming < shown) return run;
+    return next;
+  });
+}
 export function pollDelay(attempt: number, minimum = 2000, maximum = 15000): number {
   return Math.min(maximum, minimum * 2 ** Math.min(attempt, 8));
 }

@@ -30,6 +30,8 @@ function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const graphEvents = chat.pollingPaused ? [] : chat.runs.length ? chat.runs.flatMap((run) => run.events) : feed.events;
+  const graphRuns = chat.runs.length && !chat.pollingPaused ? chat.runs : undefined;
+  const backgroundJobs = chat.runs.filter((run) => run.osmosTask?.running).length;
   const activeTitle = conversations.items.find((item) => item.id === chat.conversationId)?.title;
 
   return (
@@ -124,7 +126,7 @@ function App() {
         <Panel id="graph" title="Agent graph" icon={<Network aria-hidden className="icon-size-300" />} className="h-[50dvh] lg:col-start-2 lg:row-start-1 lg:h-auto">
           <div className="min-h-0 overflow-y-auto">
             {chat.pollingPaused && <p role="status" className="text-muted-foreground">Run monitoring paused. Resume in chat to retrieve live agent status.</p>}
-            <AgentGraph events={graphEvents} />
+            <AgentGraph events={graphEvents} runs={graphRuns} backgroundJobs={backgroundJobs} />
           </div>
         </Panel>
 

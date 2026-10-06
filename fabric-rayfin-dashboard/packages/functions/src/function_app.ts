@@ -22,7 +22,7 @@ import type {
   GitHubBranchView,
   GitHubFile,
 } from '@rayfin-app/shared';
-import { isRunTerminal, isTaskTerminal, TERMINAL_RUN_STATES } from '@rayfin-app/shared';
+import { effectiveAgentStatus, isRunTerminal, isTaskTerminal, TERMINAL_RUN_STATES } from '@rayfin-app/shared';
 import { randomUUID } from 'node:crypto';
 import {
   promptWorkspaceContext,
@@ -172,7 +172,11 @@ async function buildView(data: Data, run: AgentRunRecord): Promise<RunView> {
     prompt: run.prompt,
     response: response || undefined,
     error: run.error || undefined,
-    events: events.filter((event) => event.agent !== 'release_intelligence').map(toEventView),
+    events: events.filter((event) => event.agent !== 'release_intelligence').map((event) => {
+      const view = toEventView(event);
+      if (!event.eventKey.includes(':osmos:')) view.status = effectiveAgentStatus(view.status, view.agent, asStatus(run.status));
+      return view;
+    }),
     osmos: parseHandoff(run.handoff),
     osmosTask: run.osmosTaskId
       ? { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Submitting', running: !isTaskTerminal(run.osmosStatus) }

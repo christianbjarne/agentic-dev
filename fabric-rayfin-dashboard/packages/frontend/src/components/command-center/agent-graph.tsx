@@ -1,4 +1,12 @@
-import { ORCHESTRATOR_ID, SPECIALISTS, type AgentStatus, type RunEventView } from '@rayfin-app/shared';
+import {
+  effectiveAgentStatus,
+  isRunTerminal,
+  ORCHESTRATOR_ID,
+  SPECIALISTS,
+  type AgentStatus,
+  type RunEventView,
+  type RunStatus,
+} from '@rayfin-app/shared';
 import { Bot, CheckCircle2, CircleDashed, Loader2, XCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 
@@ -14,8 +22,24 @@ export function agentLabel(id: string): string {
   return AGENT_LABELS[id] ?? id.replace(/_/g, ' ');
 }
 
-/** Resolve each run first, so an old working event cannot mask its terminal outcome. */
-export function agentStatuses(events: RunEventView[]): Record<string, { status: AgentStatus; task?: string }> {
+export interface GraphRun {
+  runKey: string;
+  status: RunStatus;
+  createdAt: string;
+}
+
+/**
+ * Agent status comes from persisted run outcomes. An event is "working" only
+ * while its parent run is known to be queued/working; terminal runs render
+ * static states, and a working event from an older run can never mask a newer
+ * outcome. Without run data (live feed) the newest event wins, as returned
+ * already reconciled by the server.
+ */
+export function agentStatuses(
+  events: RunEventView[],
+  runs?: GraphRun[],
+): Record<string, { status: AgentStatus; task?: string }> {
+  const runStatus = new Map(runs?.map((run) => [run.runKey, run.status]));
   const latest = new Map<string, RunEventView>();
   for (const event of events) {
     if (event.agent === 'release_intelligence' || event.agent === 'osmos_task') continue;
@@ -23,17 +47,24 @@ export function agentStatuses(events: RunEventView[]): Record<string, { status: 
     const previous = latest.get(key);
     if (!previous || new Date(event.createdAt).getTime() >= new Date(previous.createdAt).getTime()) latest.set(key, event);
   }
-  const result: Record<string, { status: AgentStatus; task?: string; at: number }> = {};
+  const result: Record<string, { status: AgentStatus; task?: string; at: number; active: boolean }> = {};
   for (const event of latest.values()) {
+    const status = effectiveAgentStatus(event.status, event.agent, runs ? runStatus.get(event.runKey) ?? 'incomplete' : undefined);
     const at = new Date(event.createdAt).getTime();
+    const active = Boolean(runs) && status === 'working';
     const current = result[event.agent];
-    const replaces =
-      !current ||
-      (event.status === 'working' && current.status !== 'working') ||
-      (current.status !== 'working' && at > current.at);
-    if (replaces) result[event.agent] = { status: event.status, task: event.task, at };
+    const replaces = !current || (active && !current.active) || (active === current.active && at > current.at);
+    if (replaces) result[event.agent] = { status, task: event.task, at, active };
   }
-  return result;
+  if (runs?.length) {
+    const newest = [...runs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+    const live = runs.find((run) => !isRunTerminal(run.status));
+    const run = live ?? newest;
+    const task = latest.get(`${run.runKey}:${ORCHESTRATOR_ID}`)?.task ?? result[ORCHESTRATOR_ID]?.task;
+    const status: AgentStatus = isRunTerminal(run.status) ? (run.status as AgentStatus) : 'working';
+    result[ORCHESTRATOR_ID] = { status, task, at: Date.parse(run.createdAt), active: status === 'working' };
+  }
+  return Object.fromEntries(Object.entries(result).map(([agent, { status, task }]) => [agent, { status, task }]));
 }
 
 export const STATUS_STYLES: Record<AgentStatus, { label: string; chip: string; ring: string; icon: ReactNode }> = {
@@ -71,7 +102,7 @@ export const STATUS_STYLES: Record<AgentStatus, { label: string; chip: string; r
   },
 };
 
-export function StatusChip({ status }: { status: AgentStatus }) {
+export function StatusChip({ status, static: still }: { status: AgentStatus; static?: boolean }) {
   const style = STATUS_STYLES[status];
   return (
     <span
@@ -81,7 +112,7 @@ export function StatusChip({ status }: { status: AgentStatus }) {
         style.chip,
       )}
     >
-      {style.icon}
+      {still && status === 'working' ? <span aria-hidden className="size-[8px] rounded-full bg-working" /> : style.icon}
       {style.label}
     </span>
   );
@@ -91,8 +122,8 @@ export function StatusChip({ status }: { status: AgentStatus }) {
  * Orchestrator in the center, specialists on a ring. Positions are computed,
  * so the graph scales with its container on every breakpoint.
  */
-export function AgentGraph({ events }: { events: RunEventView[] }) {
-  const statuses = agentStatuses(events);
+export function AgentGraph({ events, runs, backgroundJobs = 0 }: { events: RunEventView[]; runs?: GraphRun[]; backgroundJobs?: number }) {
+  const statuses = agentStatuses(events, runs);
   const center = { x: 50, y: 50 };
   const observed = [...new Set(events.map((event) => event.agent))].filter((id) =>
     id !== ORCHESTRATOR_ID && id !== 'release_intelligence' && id !== 'osmos_task' && !SPECIALISTS.some((agent) => agent.id === id));
@@ -109,6 +140,11 @@ export function AgentGraph({ events }: { events: RunEventView[] }) {
       <p className="sr-only" aria-live="polite">
         {activeCount ? `${activeCount} agent(s) working.` : 'No agents are working.'}
       </p>
+      {backgroundJobs > 0 && orchestrator !== 'working' && (
+        <p role="status" className="text-center text-[length:var(--text-200)] text-muted-foreground">
+          Orchestrator {STATUS_STYLES[orchestrator].label.toLowerCase()}; {backgroundJobs} Osmos/Fabric job(s) still running separately.
+        </p>
+      )}
       <div className="relative mx-auto aspect-square w-full max-w-[340px]">
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" aria-hidden>
           <circle cx="50" cy="50" r="39" className="fill-none stroke-border" strokeWidth="0.3" strokeDasharray="1 1.5" />
@@ -127,7 +163,9 @@ export function AgentGraph({ events }: { events: RunEventView[] }) {
                   status === 'completed' && 'stroke-success',
                   status === 'failed' && 'stroke-destructive',
                   status === 'idle' && 'stroke-border',
+                  (status === 'cancelled' || status === 'incomplete') && 'stroke-muted-foreground',
                 )}
+                data-status={status}
                 strokeDasharray={status === 'working' ? '1.2 0.8' : undefined}
               />
             );
@@ -159,7 +197,7 @@ export function AgentGraph({ events }: { events: RunEventView[] }) {
       <ul className="flex flex-wrap justify-center gap-300" aria-label="Status legend">
         {(['idle', 'working', 'completed', 'failed'] as const).map((status) => (
           <li key={status}>
-            <StatusChip status={status} />
+            <StatusChip status={status} static />
           </li>
         ))}
       </ul>

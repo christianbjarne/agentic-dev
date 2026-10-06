@@ -4,7 +4,7 @@ import type {
   RunView,
   WorkspaceStatusView,
 } from '@rayfin-app/shared';
-import { isRunTerminal, pollDelay } from '@rayfin-app/shared';
+import { isRunTerminal, mergeRunUpdate, pollDelay } from '@rayfin-app/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getRayfinClient } from '@/lib/rayfin-client';
@@ -138,7 +138,7 @@ export function useConversation(onChange: () => void) {
         const client = await getRayfinClient();
         const next = await client.functions.pollRun.invoke({ runKey: activeKey });
         if (cancelled) return;
-        setRuns((current) => current.map((run) => (run.runKey === next.runKey ? next : run)));
+        setRuns((current) => mergeRunUpdate(current, next));
         setError(next.error ?? null);
         failures = next.error && !isTerminal(next) ? failures + 1 : 0;
         if (isTerminal(next)) {

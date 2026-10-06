@@ -2,8 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseResponse, startResponse, ORCHESTRATOR_AGENT } from '../packages/functions/dist/foundry.js';
 import { fixOsmosLakehouseIds, resolveOsmosLakehouse, workspaceStatus, workspaceBranches, listWorkspaces } from '../packages/functions/dist/fabric.js';
-import { isRunTerminal, isTaskTerminal, pollDelay, SPECIALISTS } from '../packages/shared/dist/index.js';
+import { effectiveAgentStatus, isRunTerminal, isTaskTerminal, pollDelay, SPECIALISTS } from '../packages/shared/dist/index.js';
 import { githubBranchView, githubCommitFiles } from '../packages/functions/dist/github.js';
+
+test('server views only report working agents for runs that are still active', () => {
+  for (const run of ['completed', 'failed', 'cancelled', 'incomplete']) {
+    assert.equal(effectiveAgentStatus('working', 'data_engineer', run), 'incomplete');
+    assert.equal(effectiveAgentStatus('working', 'fabric_orchestrator', run), run);
+  }
+  assert.equal(effectiveAgentStatus('working', 'power_bi', 'working'), 'working');
+  assert.equal(effectiveAgentStatus('working', 'power_bi', 'queued'), 'working');
+  assert.equal(effectiveAgentStatus('completed', 'power_bi', 'working'), 'completed');
+});
 
 test('terminal states and polling backoff are explicit and bounded', () => {
   for (const state of ['completed', 'failed', 'cancelled', 'incomplete']) assert.ok(isRunTerminal(state));

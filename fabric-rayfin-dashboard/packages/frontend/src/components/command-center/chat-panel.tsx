@@ -1,5 +1,5 @@
 import type { OsmosTaskView, RunView } from '@rayfin-app/shared';
-import { isRunTerminal, isTaskTerminal, pollDelay } from '@rayfin-app/shared';
+import { effectiveAgentStatus, isRunTerminal, isTaskTerminal, pollDelay } from '@rayfin-app/shared';
 import { ExternalLink, Loader2, MessageSquare, Send, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 
@@ -127,7 +127,9 @@ export function ChatPanel({
 }
 
 function RunMessages({ run, canCreateOsmos, pollingPaused }: { run: RunView; canCreateOsmos: boolean | null; pollingPaused: boolean }) {
-  const specialists = run.events.filter((event) => event.agent !== 'fabric_orchestrator' && event.agent !== 'osmos_task');
+  const specialists = run.events
+    .filter((event) => event.agent !== 'fabric_orchestrator' && event.agent !== 'osmos_task')
+    .map((event) => ({ ...event, status: effectiveAgentStatus(event.status, event.agent, run.status) }));
   const done = isRunTerminal(run.status);
   return (
     <article className="flex flex-col gap-200" aria-label="Conversation turn">
