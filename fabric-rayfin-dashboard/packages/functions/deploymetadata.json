@@ -1,0 +1,666 @@
+{
+  "runtime": "TypeScript",
+  "functionsMetadata": [
+    {
+      "name": "getLiveFeed",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getLiveFeed"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<RunEventView[]>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getLiveFeed',\n  async (ctx: RayfinContext<UniversalAppSchema>): Promise<Wire<RunEventView[]>> => {\n    callerSubject(ctx);\n    const data = ctx.getDataClient();\n    const events = await data.RunEvent.select(EVENT_FIELDS).orderBy({ updatedAt: 'desc' }).first(100).execute();\n    const runs = new Map<string, AgentRunRecord | undefined>();\n    await Promise.all([...new Set(events.map((event) => event.runKey))].map(async (key) => runs.set(key, await readRun(data, key))));\n    return events.filter((event) => event.agent !== 'release_intelligence').map((event) => {\n      const run = runs.get(event.runKey);\n      const view = toEventView(event as RunEventRecord);\n      if (view.status === 'working' && run && !event.eventKey.includes(':osmos:')) {\n        if (isRunTerminal(run.status)) {\n          view.status = event.agent === ORCHESTRATOR ? asAgentStatus(run.status) : 'incomplete';\n          view.summary = event.summary ?? 'Run is terminal; no specialist result is available.';\n        } else if (Date.now() - new Date(run.createdAt).getTime() >= STALE_RUN_MS) {\n          view.status = 'failed';\n          view.summary = 'Run monitoring deadline exceeded. Reopen the conversation to reconcile Foundry status.';\n        }\n      }\n      return view;\n    });\n  },\n  [],\n)"
+    },
+    {
+      "name": "startRun",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "startRun"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_AzureAI",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "AzureAI"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<RunView>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "prompt",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "conversationId",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'startRun',\n  async (\n    prompt: string,\n    conversationId: string,\n    ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,\n  ): Promise<Wire<RunView>> => {\n    const owner = callerSubject(ctx);\n    const text = (prompt ?? '').trim();\n    if (!text) throw new Error('Enter a prompt.');\n    if (text.length > MAX_PROMPT) throw new Error(`Prompts are limited to ${MAX_PROMPT} characters.`);\n    if (conversationId && !UUID_PATTERN.test(conversationId)) throw new Error('Invalid conversation id.');\n    const data = ctx.getDataClient();\n    const now = new Date();\n\n    let conversation = conversationId ? await readConversation(data, conversationId) : undefined;\n    if (conversationId && !conversation) throw new Error('Conversation not found.');\n    if (conversation?.activeRunKey) {\n      const active = await readRun(data, conversation.activeRunKey);\n      if (active && !isRunTerminal(active.status) && now.getTime() - new Date(active.createdAt).getTime() >= STALE_RUN_MS) {\n        await pollStoredRun(ctx, active.runKey);\n      }\n      if (\n        active &&\n        !isRunTerminal(active.status) &&\n        now.getTime() - new Date(active.createdAt).getTime() < STALE_RUN_MS\n      ) {\n        throw new Error('The orchestrator is still working on the previous prompt in this conversation.');\n      }\n    }\n    if (!conversation) {\n      const record = {\n        title: str(text.replace(/\\s+/g, ' '), 80),\n        lastPrompt: str(text, 500),\n        createdAt: now,\n        updatedAt: now,\n        owner_id: owner,\n      };\n      const created = await data.Conversation.create(record);\n      conversation = { ...record, id: created.id };\n    }\n\n    const runKey = newKey();\n    const createdRun = await data.AgentRun.create({\n      runKey,\n      conversationKey: conversation.id,\n      prompt: text,\n      status: 'queued',\n      createdAt: now,\n      updatedAt: now,\n      owner_id: owner,\n    });\n\n    // Only the app owner gets workspace context: the Fabric token is the app\n    // identity, so other callers must not be able to read the owner's workspaces.\n    let workspaceContext: PromptWorkspaceContext | undefined;\n    try {\n      if (callerIsAppIdentity(ctx)) workspaceContext = await promptWorkspaceContext(ctx.Tokens.Fabric, text);\n    } catch {\n      workspaceContext = undefined;\n    }\n\n    let started: Awaited<ReturnType<typeof startResponse>>;\n    try {\n      started = await startResponse(\n      ctx.Tokens.AzureAI,\n      envelope(runKey, text, workspaceContext?.text),\n      conversation.previousResponseId,\n      conversation.agentSessionId,\n      );\n    } catch {\n      started = { reset: false, error: 'The orchestrator submission timed out or could not be reached. Try again.' };\n    }\n    if (!started.started) {\n      await data.AgentRun.update({ id: createdRun.id }, { status: 'failed', error: started.error, updatedAt: new Date() });\n    } else {\n      await data.AgentRun.update(\n        { id: createdRun.id },\n        { status: 'working', responseId: started.started.id, updatedAt: new Date() },\n      );\n      await data.RunEvent.create({\n        runKey,\n        eventKey: `${runKey}:orchestrator`,\n        agent: ORCHESTRATOR,\n        status: 'working',\n        task: str(text, 1000),\n        summary: started.reset\n          ? 'Started a new orchestrator session (the previous one expired).'\n          : workspaceContext\n            ? `Planning the request with Fabric context for: ${workspaceContext.workspaces.join(', ')}.`\n            : 'Planning the request.',\n        createdAt: now,\n        updatedAt: now,\n        owner_id: owner,\n      });\n    }\n    await data.Conversation.update(\n      { id: conversation.id },\n      {\n        lastPrompt: str(text, 500),\n        activeRunKey: started.started ? runKey : conversation.activeRunKey ?? undefined,\n        previousResponseId: started.reset ? '' : conversation.previousResponseId ?? undefined,\n        agentSessionId: started.started?.agentSessionId ?? (started.reset ? '' : conversation.agentSessionId ?? undefined),\n        updatedAt: new Date(),\n      },\n    );\n    if (started.started && isRunTerminal(started.started.status)) {\n      const run = await findRun(data, runKey);\n      await recordProgress(data, owner, run, started.started.parsed);\n      await finishRun(data, owner, run, started.started.parsed);\n    }\n    return buildView(data, await findRun(data, runKey));\n  },\n  [],\n)"
+    },
+    {
+      "name": "pollRun",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "pollRun"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_AzureAI",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "AzureAI"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<RunView>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "runKey",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'pollRun',\n  async (\n    runKey: string,\n    ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,\n  ): Promise<Wire<RunView>> => {\n    return pollStoredRun(ctx, runKey);\n  },\n  [],\n)"
+    },
+    {
+      "name": "getConversation",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getConversation"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_AzureAI",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "AzureAI"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<RunView[]>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "conversationId",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getConversation',\n  async (\n    conversationId: string,\n    ctx: RayfinContext<UniversalAppSchema, AudienceType.AzureAI | AudienceType.Fabric>,\n  ): Promise<Wire<RunView[]>> => {\n    callerSubject(ctx);\n    if (!UUID_PATTERN.test(conversationId)) throw new Error('Invalid conversation id.');\n    const data = ctx.getDataClient();\n    const runs = await data.AgentRun.select(RUN_FIELDS)\n      .where({ conversationKey: { eq: conversationId } })\n      .orderBy({ createdAt: 'asc' })\n      .first(50)\n      .execute();\n    return Promise.all(runs.map((run) => pollStoredRun(ctx, run.runKey)));\n  },\n  [],\n)"
+    },
+    {
+      "name": "getWorkspaceStatus",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getWorkspaceStatus"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<WorkspaceStatusView>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "workspaceId",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "gitOperationId",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getWorkspaceStatus',\n  async (workspaceId: string, gitOperationId: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<WorkspaceStatusView>> => {\n    callerSubject(ctx);\n    const id = (workspaceId || ALLOWED_WORKSPACES[0]).toLowerCase();\n    if (!UUID_PATTERN.test(id)) throw new Error('Select a valid workspace.');\n    if (!ALLOWED_WORKSPACES.includes(id) && !callerIsAppIdentity(ctx)) {\n      return {\n        ok: false,\n        message: 'Only the app owner can browse additional workspaces with the app identity.',\n        workspaceId: id,\n        itemCounts: [],\n        items: [],\n        jobs: [],\n        checkedAt: new Date().toISOString(),\n      };\n    }\n    if (gitOperationId && !UUID_PATTERN.test(gitOperationId)) throw new Error('Invalid Git operation id.');\n    return workspaceStatus(ctx.Tokens.Fabric, id, gitOperationId);\n  },\n  [],\n)"
+    },
+    {
+      "name": "getWorkspaceBranches",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getWorkspaceBranches"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<WorkspaceBranchPage>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "workspaceId",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "cursor",
+            "dataType": "number",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "discover",
+            "dataType": "boolean",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getWorkspaceBranches',\n  async (workspaceId: string, cursor: number, discover: boolean, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<WorkspaceBranchPage>> => {\n    requireOwner(ctx);\n    if (!UUID_PATTERN.test(workspaceId)) throw new Error('Invalid workspace.');\n    if (!Number.isInteger(cursor) || cursor < 0 || cursor > 5000) throw new Error('Invalid branch-workspace discovery cursor.');\n    return workspaceBranches(ctx.Tokens.Fabric, workspaceId, cursor, discover);\n  },\n  [],\n)"
+    },
+    {
+      "name": "getWorkspaces",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getWorkspaces"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<WorkspaceChoice[]>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getWorkspaces',\n  async (ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<WorkspaceChoice[]>> => {\n    callerSubject(ctx);\n    if (!callerIsAppIdentity(ctx)) {\n      return [{ id: APP_WORKSPACE_ID, name: 'Command center workspace' }];\n    }\n    return listWorkspaces(ctx.Tokens.Fabric);\n  },\n  [],\n)"
+    },
+    {
+      "name": "getGitHubRepositories",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getGitHubRepositories"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<GitHubRepository[]>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getGitHubRepositories',\n  async (ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<GitHubRepository[]>> => {\n    requireOwner(ctx);\n    return githubRepositories(ctx.Secrets.GITHUB_READ_TOKEN);\n  },\n  [],\n)"
+    },
+    {
+      "name": "getGitHubBranches",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getGitHubBranches"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<string[]>",
+        "fabricFunctionParameters": [
+          {
+            "name": "repository",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getGitHubBranches',\n  async (repository: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<string[]> => {\n    requireOwner(ctx);\n    return githubBranches(ctx.Secrets.GITHUB_READ_TOKEN, repository);\n  },\n  [],\n)"
+    },
+    {
+      "name": "getGitHubBranch",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getGitHubBranch"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<GitHubBranchView>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "repository",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "branch",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getGitHubBranch',\n  async (repository: string, branch: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<GitHubBranchView>> => {\n    requireOwner(ctx);\n    return githubBranchView(ctx.Secrets.GITHUB_READ_TOKEN, repository, branch);\n  },\n  [],\n)"
+    },
+    {
+      "name": "getGitHubCommit",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getGitHubCommit"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<GitHubFile[]>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "repository",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "sha",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getGitHubCommit',\n  async (repository: string, sha: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<GitHubFile[]>> => {\n    requireOwner(ctx);\n    return githubCommitFiles(ctx.Secrets.GITHUB_READ_TOKEN, repository, sha);\n  },\n  [],\n)"
+    },
+    {
+      "name": "whoAmI",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "whoAmI"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<IdentityView>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'whoAmI',\n  async (ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<IdentityView>> => {\n    const claims = jwtClaims(ctx.accessToken);\n    const subject = callerSubject(ctx);\n    let app: IdentityView['appIdentity'];\n    let same = false;\n    try {\n      const identity = appIdentity(ctx);\n      const tokenClaims = jwtClaims(ctx.Tokens.Fabric);\n      app = {\n        upn: identity.upn,\n        oid: identity.oid,\n        type: identity.type,\n        audience: claimString(tokenClaims, 'aud') || undefined,\n        appId: claimString(tokenClaims, 'appid', 'azp') || undefined,\n        scopes: claimString(tokenClaims, 'scp').slice(0, 1000) || undefined,\n      };\n      same = callerIsAppIdentity(ctx);\n    } catch {\n      app = undefined;\n    }\n    return {\n      caller: {\n        subject,\n        name: claimString(claims, 'name') || undefined,\n        email: claimString(claims, 'email', 'upn', 'preferred_username') || undefined,\n      },\n      appIdentity: app,\n      callerIsAppIdentity: same,\n      allowedWorkspaces: ALLOWED_WORKSPACES,\n    };\n  },\n  [],\n)"
+    },
+    {
+      "name": "createOsmosTask",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "createOsmosTask"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<OsmosTaskView>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "runKey",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'createOsmosTask',\n  async (runKey: string, ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric>): Promise<Wire<OsmosTaskView>> => {\n    const owner = callerSubject(ctx);\n    const { data, run, request } = await osmosContext(ctx, runKey);\n    if (run.osmosTaskId) return { ok: true, taskId: run.osmosTaskId, status: run.osmosStatus ?? 'Running' };\n    let result: OsmosTaskView;\n    try {\n      const target = await osmosRequestForLakehouse(ctx, data, run, request);\n      result = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, target);\n    } catch (error) {\n      return { ok: false, message: str((error as Error).message, 1000) || 'Project Osmos did not accept the request.' };\n    }\n    if (result.ok && result.taskId) {\n      const now = new Date();\n      await data.AgentRun.update({ id: run.id }, {\n        osmosTaskId: result.taskId, osmosStatus: result.status ?? 'Submitting',\n        osmosJobLocation: result.jobLocation, osmosStartedAt: now, updatedAt: now,\n      });\n      await data.RunEvent.create({\n        runKey: run.runKey,\n        eventKey: `${run.runKey}:osmos:${result.taskId}`,\n        agent: 'osmos_task',\n        status: 'working',\n        task: str(`Project Osmos task: ${request.displayName}`, 1000),\n        summary: `Task ${result.taskId} submitted as you via the Fabric notebook bridge. ${result.taskPage ?? ''}`,\n        createdAt: now,\n        updatedAt: now,\n        owner_id: owner,\n      });\n    }\n    return result;\n  },\n  [],\n)"
+    },
+    {
+      "name": "getOsmosTask",
+      "scriptFile": "src\\function_app.ts",
+      "bindings": [
+        {
+          "name": "req",
+          "type": "httpTrigger",
+          "direction": "in",
+          "authLevel": "anonymous",
+          "methods": [
+            "post"
+          ],
+          "route": "getOsmosTask"
+        },
+        {
+          "name": "$return",
+          "type": "http",
+          "direction": "out"
+        },
+        {
+          "name": "__generic_Fabric",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Fabric"
+        },
+        {
+          "name": "__generic_Storage",
+          "direction": "in",
+          "type": "FabricItem",
+          "alias": "",
+          "audienceType": "Storage"
+        }
+      ],
+      "fabricProperties": {
+        "fabricMetadataSchemaVersion": "1.0",
+        "fabricFunctionReturnType": "Promise<Wire<OsmosTaskView>>",
+        "fabricFunctionParameters": [
+          {
+            "name": "runKey",
+            "dataType": "string",
+            "hasDefaultValue": false
+          },
+          {
+            "name": "ctx",
+            "dataType": "RayfinContext<UniversalAppSchema, AudienceType.Fabric | AudienceType.Storage>",
+            "hasDefaultValue": false
+          }
+        ]
+      },
+      "functionCode": "udf.func(\n  'getOsmosTask',\n  async (\n    runKey: string,\n    ctx: RayfinContext<UniversalAppSchema, AudienceType.Fabric | AudienceType.Storage>,\n  ): Promise<Wire<OsmosTaskView>> => {\n    const { data, run, request } = await osmosContext(ctx, runKey);\n    if (!run.osmosTaskId) return { ok: false, message: 'No Project Osmos task has been created for this run.' };\n    let result: OsmosTaskView;\n    try {\n      const target = await osmosRequestForLakehouse(ctx, data, run, request);\n      result = (await readOsmosBridge(ctx.Tokens.Fabric, ctx.Tokens.Storage, APP_WORKSPACE_ID, target, run.osmosTaskId, run.osmosJobLocation ?? undefined)) ?? {\n        ok: true,\n        taskId: run.osmosTaskId,\n        status: run.osmosStatus ?? 'Submitting',\n        running: true,\n        message: 'Waiting for the Fabric notebook bridge to start (usually under a minute).',\n      };\n      if (result.running && Date.now() - new Date(run.osmosStartedAt ?? run.createdAt).getTime() >= 2 * 60 * 60_000) {\n        result = { ...result, running: false, monitorPaused: true, message: 'Monitoring paused after two hours. The task may still be running. Open it in Fabric for current status.' };\n      }\n      if (result.monitorPaused) {\n        if (Date.now() - new Date(run.osmosStartedAt ?? run.createdAt).getTime() < 2 * 60 * 60_000) {\n          const resumed = await submitOsmosBridge(ctx.Tokens.Fabric, APP_WORKSPACE_ID, target, run.osmosTaskId);\n          if (!resumed.ok) return resumed;\n          await data.AgentRun.update({ id: run.id }, { osmosJobLocation: resumed.jobLocation, updatedAt: new Date() });\n          result = { ...resumed, message: 'Resuming status monitoring for the existing Osmos task; no new task was created.' };\n        } else result = { ...result, running: false, message: 'Notebook monitoring has ended. Open the existing task in Fabric for current status.' };\n      }\n    } catch (error) {\n      return { ok: false, taskId: run.osmosTaskId, message: str((error as Error).message, 1000) };\n    }\n    if (result.ok && result.status && result.status !== run.osmosStatus) {\n      await data.AgentRun.update({ id: run.id }, { osmosStatus: result.status, updatedAt: new Date() });\n      const event = await data.RunEvent.findFirst({ eventKey: { eq: `${run.runKey}:osmos:${run.osmosTaskId}` } });\n      if (event) {\n        let status = 'failed';\n        if (result.running) status = 'working';\n        else if (result.status === 'Completed') status = 'completed';\n        await data.RunEvent.update({ id: event.id }, { status, updatedAt: new Date() });\n      }\n    }\n    return result;\n  },\n  [],\n)"
+    }
+  ]
+}
