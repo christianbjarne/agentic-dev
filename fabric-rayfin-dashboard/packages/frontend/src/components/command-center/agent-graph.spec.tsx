@@ -1,7 +1,7 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mergeRunUpdate, type RunEventView, type RunStatus } from '@rayfin-app/shared';
-import { AgentGraph, agentStatuses, type GraphRun } from './agent-graph';
+import { AgentGraph, agentStatuses, currentActivity, type GraphRun } from './agent-graph';
 
 afterEach(cleanup);
 
@@ -19,6 +19,13 @@ function animation(container: HTMLElement) {
     live: container.querySelector('[aria-live]')?.textContent,
   };
 }
+function highlighted(container: HTMLElement) {
+  return {
+    edges: [...container.querySelectorAll('line[data-status]')].map((line) => line.getAttribute('data-status')).filter((s) => s !== 'idle'),
+    nodes: [...container.querySelectorAll('[role="img"]')].map((node) => node.getAttribute('aria-label') ?? '').filter((label) => !/: Idle/.test(label)).map((label) => label.split(' - ')[0]),
+  };
+}
+const NEUTRAL = { edges: [], nodes: [] };
 const STILL = { dashed: 0, pulses: 0, spinners: 0, live: 'No agents are working.' };
 
 describe('agent lifecycle evidence', () => {
@@ -41,6 +48,7 @@ describe('graph renders running only for genuinely active runs', () => {
     expect(statuses.fabric_architect.status).toBe('completed');
     const { container } = render(<AgentGraph events={events} runs={[run('r1', 'completed', -6000)]} />);
     expect(animation(container)).toEqual(STILL);
+    expect(highlighted(container)).toEqual(NEUTRAL);
   });
 
   it('failed run: orchestrator shows failed and nothing animates', () => {
@@ -67,6 +75,7 @@ describe('graph renders running only for genuinely active runs', () => {
     expect(statuses.guideline_auditor.status).toBe('completed');
     const { container } = render(<AgentGraph events={events} runs={runs} />);
     expect(animation(container)).toEqual(STILL);
+    expect(highlighted(container)).toEqual(NEUTRAL);
   });
 
   it('actual active delegation: only the in-progress run and its delegated specialist animate', () => {
@@ -85,13 +94,48 @@ describe('graph renders running only for genuinely active runs', () => {
     expect(state.dashed).toBe(1);
     expect(state.pulses).toBe(2);
     expect(state.live).toBe('2 agent(s) working.');
+    // The previous run's completed data_engineer is not carried into current activity.
+    expect(highlighted(container)).toEqual({ edges: ['working'], nodes: ['Fabric orchestrator: Working', 'Power BI: Working'] });
+  });
+
+  it('active -> completed: the graph clears to neutral when the run finishes', () => {
+    const working = [event('r1', 'working', -3000, 'fabric_orchestrator'), event('r1', 'working', -2000, 'guideline_auditor')];
+    const { container, rerender } = render(<AgentGraph events={working} runs={[run('r1', 'working', -4000)]} />);
+    expect(highlighted(container).edges).toEqual(['working']);
+    const done = [event('r1', 'completed', -1000, 'fabric_orchestrator'), event('r1', 'completed', -500, 'guideline_auditor')];
+    rerender(<AgentGraph events={done} runs={[run('r1', 'completed', -4000)]} />);
+    expect(animation(container)).toEqual(STILL);
+    expect(highlighted(container)).toEqual(NEUTRAL);
+  });
+
+  it('completed previous run while a new run starts: only the new run is highlighted', () => {
+    const events = [
+      event('prev', 'completed', -60_000, 'fabric_orchestrator'),
+      event('prev', 'completed', -50_000, 'guideline_auditor'),
+      event('prev', 'failed', -40_000, 'fabric_architect'),
+      event('next', 'working', -1000, 'fabric_orchestrator'),
+    ];
+    const runs = [run('prev', 'completed', -70_000), run('next', 'queued', -2000)];
+    const { container } = render(<AgentGraph events={events} runs={runs} />);
+    expect(highlighted(container)).toEqual({ edges: [], nodes: ['Fabric orchestrator: Working'] });
+  });
+
+  it('live feed fallback shows only runs whose orchestrator is still working', () => {
+    const events = [
+      event('old', 'completed', -60_000, 'fabric_orchestrator'),
+      event('old', 'completed', -50_000, 'guideline_auditor'),
+      event('live', 'working', -2000, 'fabric_orchestrator'),
+      event('live', 'working', -1000, 'power_bi'),
+    ];
+    expect(Object.keys(currentActivity(events)).sort()).toEqual(['fabric_orchestrator', 'power_bi']);
+    expect(currentActivity(events.slice(0, 2))).toEqual({});
   });
 
   it('a completed orchestrator stays static while an Osmos/Fabric job runs separately', () => {
     const events = [event('r1', 'completed', -5000, 'fabric_orchestrator'), event('r1', 'working', -1000, 'osmos_task')];
     const { container, getByRole } = render(<AgentGraph events={events} runs={[run('r1', 'completed', -6000)]} backgroundJobs={1} />);
     expect(animation(container)).toEqual(STILL);
-    expect(getByRole('status').textContent).toMatch(/Orchestrator completed; 1 Osmos\/Fabric job/);
+    expect(getByRole('status').textContent).toMatch(/No agents running; 1 Osmos\/Fabric job/);
   });
 
   it('stale poll race: an older non-terminal poll cannot overwrite a newer terminal state', () => {

@@ -67,6 +67,29 @@ export function agentStatuses(
   return Object.fromEntries(Object.entries(result).map(([agent, { status, task }]) => [agent, { status, task }]));
 }
 
+/**
+ * The graph shows CURRENT activity only: agents of runs that are still
+ * queued/working. Once nothing is running every node returns to idle; final
+ * outcomes stay in the chat, history and live feed. Without run data (live
+ * feed), a run is active while its server-reconciled orchestrator event is
+ * still working.
+ */
+export function currentActivity(
+  events: RunEventView[],
+  runs?: GraphRun[],
+): Record<string, { status: AgentStatus; task?: string }> {
+  if (runs) {
+    const active = runs.filter((run) => !isRunTerminal(run.status));
+    if (!active.length) return {};
+    const keys = new Set(active.map((run) => run.runKey));
+    return agentStatuses(events.filter((event) => keys.has(event.runKey)), active);
+  }
+  const keys = new Set(
+    events.filter((event) => event.agent === ORCHESTRATOR_ID && event.status === 'working').map((event) => event.runKey),
+  );
+  return agentStatuses(events.filter((event) => keys.has(event.runKey)));
+}
+
 export const STATUS_STYLES: Record<AgentStatus, { label: string; chip: string; ring: string; icon: ReactNode }> = {
   idle: {
     label: 'Idle',
@@ -123,7 +146,7 @@ export function StatusChip({ status, static: still }: { status: AgentStatus; sta
  * so the graph scales with its container on every breakpoint.
  */
 export function AgentGraph({ events, runs, backgroundJobs = 0 }: { events: RunEventView[]; runs?: GraphRun[]; backgroundJobs?: number }) {
-  const statuses = agentStatuses(events, runs);
+  const statuses = currentActivity(events, runs);
   const center = { x: 50, y: 50 };
   const observed = [...new Set(events.map((event) => event.agent))].filter((id) =>
     id !== ORCHESTRATOR_ID && id !== 'release_intelligence' && id !== 'osmos_task' && !SPECIALISTS.some((agent) => agent.id === id));
@@ -142,7 +165,7 @@ export function AgentGraph({ events, runs, backgroundJobs = 0 }: { events: RunEv
       </p>
       {backgroundJobs > 0 && orchestrator !== 'working' && (
         <p role="status" className="text-center text-[length:var(--text-200)] text-muted-foreground">
-          Orchestrator {STATUS_STYLES[orchestrator].label.toLowerCase()}; {backgroundJobs} Osmos/Fabric job(s) still running separately.
+          No agents running; {backgroundJobs} Osmos/Fabric job(s) still running separately.
         </p>
       )}
       <div className="relative mx-auto aspect-square w-full max-w-[340px]">
